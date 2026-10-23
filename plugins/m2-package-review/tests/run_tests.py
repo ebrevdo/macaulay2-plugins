@@ -83,6 +83,11 @@ with tempfile.TemporaryDirectory() as d:
     open(jp, 'w').write(before[0])
     r = run('render_report.py', jp, '--root', PKGS, '--out', os.path.join(d, 'missing-dir', 'r.md'))
     check('an unwritable report path fails without touching the JSON', r.returncode != 0 and open(jp).read() == before[0], r.stderr[-200:])
+    fenced = json.loads(json.dumps(good)); fenced['findings'][0]['confirm_or_fix'] = '```m2\nfooA 1\n```\nFix: guard it.'
+    json.dump(fenced, open(jp, 'w'))
+    r = run('render_report.py', jp, '--root', PKGS, '--out', mp)
+    check('a fenced code block in a text field starts on its own line', r.returncode == 0 and '**Confirm / fix.**\n\n```m2' in open(mp).read(), r.stderr[-200:])
+    open(jp, 'w').write(before[0])
     check('no temporary files left behind', not [f for f in os.listdir(d) if '.tmp-' in f], os.listdir(d))
 
 # --- md_to_pdf: styled HTML always; a real PDF when a PDF engine is installed
@@ -92,6 +97,17 @@ with tempfile.TemporaryDirectory() as d:
     r = run('md_to_pdf.py', md, '--html')
     page = open(os.path.join(d, 'r.html')).read() if r.returncode == 0 else ''
     check('md_to_pdf writes styled HTML with tables and code', '<table' in page and '<pre' in page and '@page' in page, r.stderr[-200:])
+    rep = os.path.join(d, 'rep.md')
+    open(rep, 'w').write('# R\n\n**Findings:** 1 critical · 1\nminor\n\n## Findings\n\n### Critical\n\n'
+                         '#### F01. Bad thing\n\n**Severity:** 1 Critical · **Certainty:** definite · **Kind:** correctness\n'
+                         '**Where:** `Foo.m2:4-5`\n\nRelated to F02.\n\n### Minor\n\n#### F02. Small thing\n\n'
+                         '**Severity:** 4 Minor · **Certainty:** probable\n')
+    r = run('md_to_pdf.py', rep, '--html', '--source-url', 'https://example.org/pkgs/')
+    page = open(os.path.join(d, 'rep.html')).read() if r.returncode == 0 else ''
+    check('md_to_pdf wraps findings in severity-colored cards', 'class="finding sev-1"' in page and 'class="finding sev-4"' in page)
+    check('md_to_pdf links finding ids in running text', 'class="xref" href="#f02"' in page)
+    check('md_to_pdf links file:line citations to the source', 'href="https://example.org/pkgs/Foo.m2#L4-L5"' in page)
+    check('md_to_pdf links severity counts, even across a line break', 'href="#critical"' in page and 'href="#minor"' in page)
     r = run('md_to_pdf.py', md)
     if r.returncode == 2:
         print('skip md_to_pdf PDF check (no PDF engine installed)')

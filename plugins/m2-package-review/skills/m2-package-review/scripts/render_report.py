@@ -246,6 +246,16 @@ def process(review, src, check_only):
     return errors, warnings, mismatches
 
 
+def labeled(label, text):
+    """A bold label followed by text. Text containing a fenced code block starts on its own line,
+    because a fence only opens a code block at the start of a line; inline, it would turn the rest
+    of the report into one long code span."""
+    text = text.strip()
+    if re.search(r'^\s*(```|~~~)', text, re.M):
+        return f'**{label}**\n\n{text}\n'
+    return f'**{label}** {text}\n'
+
+
 def render(r):
     out = []
     pkg = r.get('package', 'Package')
@@ -293,9 +303,9 @@ def render(r):
                 out.append(fence(e['excerpt']) + '\n')
             if f.get('also_at'):
                 out.append('**Also at:** ' + '; '.join(also_loc(x) for x in f['also_at']) + '\n')
-            out.append(f"**What happens.** {f['what_happens'].strip()}\n")
-            out.append(f"**Why it matters.** {f['why_it_matters'].strip()}\n")
-            out.append(f"**Confirm / fix.** {f['confirm_or_fix'].strip()}\n")
+            out.append(labeled('What happens.', f['what_happens']))
+            out.append(labeled('Why it matters.', f['why_it_matters']))
+            out.append(labeled('Confirm / fix.', f['confirm_or_fix']))
             if f.get('repro'):
                 out.append(fence(f['repro'].rstrip()) + '\n')
     sweep = r.get('boundary_sweep') or []

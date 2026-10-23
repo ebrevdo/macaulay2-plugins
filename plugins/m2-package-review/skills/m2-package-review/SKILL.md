@@ -216,7 +216,9 @@ validates the fields, and produces the Markdown report. Don't type excerpts by h
 generator. Each finding's quoted evidence is at most 8 lines: for a longer citation, set
 `quote_start`/`quote_end` to the lines that show the problem, or put the location in `also_at`.
 If the renderer reports errors, fix the JSON and rerun it; it writes nothing until the review is valid.
-To share the report as a PDF, run `python3 -I <skill-dir>/scripts/md_to_pdf.py review.md`.
+To share the report as a PDF, run `python3 -I <skill-dir>/scripts/md_to_pdf.py review.md`. Add
+`--source-url <URL of the package's directory on GitHub at the reviewed commit>` to make every
+`file.m2:line` citation a link to those lines.
 
 ## Step 3 — Important passes
 
