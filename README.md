@@ -25,6 +25,8 @@ It bundles:
   verify.
 - `scripts/render_report.py`, which renders the review from its JSON. It quotes every excerpt
   verbatim from the cited lines, and validates the review before writing anything.
+- `scripts/md_to_pdf.py`, which turns a report into a formatted PDF. It uses pandoc or Python-Markdown,
+  and headless Chrome/Chromium/Edge, WeasyPrint, or wkhtmltopdf.
 - `references/checklist.md`, the per-pass questions and real defect shapes.
 - `references/report-template.md`, the review JSON schema and the rendered report structure.
 - `references/second-reviewer.md`, the second-reviewer pass, its verification, and how to merge the results.
@@ -69,7 +71,6 @@ plugins/<plugin>/
   plugin.json                       Codex manifest (agent-plugins schema)
   skills/<skill>/                   shared skill folder (SKILL.md, references/, scripts/, agents/openai.yaml)
   tests/                            regression tests for the scripts and the packaging
-docs/case-studies/                  reviews written with the skill, and the audits of them
 ```
 
 The two manifests are kept separate because the formats differ; the tests check that their names
@@ -91,6 +92,8 @@ python3 -I plugins/m2-package-review/skills/m2-package-review/scripts/m2_package
 
 ## License
 
-Apache License 2.0; see `LICENSE`. `NOTICE` lists the third-party content: the style-guide copy is
-the Macaulay2 project's text, and the case studies quote short excerpts of GPL-licensed Macaulay2
-source.
+Apache License 2.0; see `LICENSE`. `NOTICE` covers the one piece of third-party content: the
+style-guide copy is the Macaulay2 project's text.
+
+Reviews produced with the skill, and their PDFs, are outputs rather than part of this repository, and
+`.gitignore` keeps them out.

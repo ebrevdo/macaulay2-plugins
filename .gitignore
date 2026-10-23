@@ -1,4 +1,8 @@
-# Source material supplied for the case studies (large; obtain from its origin)
+# Review outputs (reports, their JSON, and PDFs) are never part of the repository
+docs/case-studies/
+*.pdf
+
+# Source material used while developing the skill (large; obtain from its origin)
 Macaulay2_Individual_Package_Reports.zip
 m2-packages.zip
 # Duplicate of plugins/m2-package-review/skills/m2-package-review/references/style-guide.md

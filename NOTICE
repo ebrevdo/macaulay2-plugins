@@ -9,7 +9,3 @@ plugins/m2-package-review/skills/m2-package-review/references/style-guide.md is 
 Macaulay2 Package Writing Style Guide from the Macaulay2 project wiki
 (https://github.com/Macaulay2/M2/wiki/Package-Writing-Style-Guide). It is the Macaulay2 project's
 text, reproduced with attribution for reference, and is not covered by this project's license.
-
-docs/case-studies/ contains reviews of Macaulay2 packages that quote short excerpts of Macaulay2
-source code. Macaulay2 and its packages are distributed under the GNU General Public License; the
-excerpts remain under their original licenses.

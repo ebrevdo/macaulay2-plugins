@@ -7,6 +7,7 @@ end of this file. Cite lines; never type excerpts by hand.
 ```bash
 python3 -I <skill-dir>/scripts/render_report.py review.json --root <dir containing the package> --out review.md
 python3 -I <skill-dir>/scripts/render_report.py review.json --root <dir> --check   # verify only
+python3 -I <skill-dir>/scripts/md_to_pdf.py review.md                              # optional PDF
 ```
 
 `--root` is the directory the evidence paths are relative to: for a package at

@@ -53,15 +53,43 @@ It writes a JSON list of `{"id", "verdict", "severity", "evidence", "explanation
 
 ## Merging into the review
 
-- **Confirmed:** add the finding to the review with the next free id. Use the verifier's severity when
-  it differs, and set `certainty_note` to "found by the second reviewer and verified independently".
+Merging is required whenever this pass runs. The user should get one review of the package that reads
+as if it had been written at once, not a first review plus a second-pass report.
+
+Merging is an editorial step, not a verification step. Don't re-judge claims or re-trace code here:
+verification has already decided each second-pass finding's fate, and merging applies those verdicts
+as given. If you notice something that looks wrong while merging, record it in `limitations` as an open
+question rather than silently changing a claim.
+
+**Applying the verdicts:**
+
+- **Confirmed:** add the finding with the next free id. Use the verifier's severity when it differs, and
+  set `certainty_note` to "found by the second reviewer and verified independently".
 - **Partially correct:** add it with the corrected claim and mechanism from the verifier's explanation,
   and the verifier's severity.
 - **Unclear:** add it only if it's consequential, with certainty `probable` or `speculative` and a note
   saying what would settle it.
 - **Refuted:** drop it, and record it in `limitations` ("second-pass claim X was checked and refuted").
-- **Rows:** merge the second pass's `boundary_sweep` rows into the review's table.
-- **Pass list:** list I6 among the completed passes, and re-render.
+- **Not verified** (e.g. moderate findings left out of verification for budget): add it unchanged, with a
+  `certainty_note` saying it was not independently verified.
+
+**Making the report consistent:**
+
+- **Ids:** first-review ids keep their numbers; second-pass findings take the next free ids in order. A
+  second-pass finding that extends a first-review finding is folded into that finding (its evidence,
+  the new failing inputs, and the higher severity if verified) rather than added as a duplicate.
+- **Cross-references:** update any text that cites second-pass ids (S01, N03, …), and any
+  `boundary_sweep` rows, to the new ids.
+- **Boundary sweep:** combine both tables into one, without duplicate function-case rows. Where both
+  passes traced the same case, keep the row that records a finding.
+- **Strengths:** take the union, without duplicates.
+- **Summary and next steps:** rewrite both to cover all findings. The summary should name the most
+  consequential problems across both passes.
+- **Limitations:** combine both lists. Note that I6 ran, which findings came from it, and any refuted or
+  unverified claims.
+- **Metadata:** list I6 among the completed passes. The renderer recomputes the severity counts.
+- **Render:** run `scripts/render_report.py` on the merged JSON. It re-quotes every excerpt from the
+  source and validates the result.
 
 ## Prompts
 

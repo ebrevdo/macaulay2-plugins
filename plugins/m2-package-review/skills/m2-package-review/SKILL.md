@@ -216,6 +216,7 @@ validates the fields, and produces the Markdown report. Don't type excerpts by h
 generator. Each finding's quoted evidence is at most 8 lines: for a longer citation, set
 `quote_start`/`quote_end` to the lines that show the problem, or put the location in `also_at`.
 If the renderer reports errors, fix the JSON and rerun it; it writes nothing until the review is valid.
+To share the report as a PDF, run `python3 -I <skill-dir>/scripts/md_to_pdf.py review.md`.
 
 ## Step 3 — Important passes
 
@@ -283,7 +284,10 @@ one mechanism, so the second pass is only trustworthy once it has been checked.
    findings' titles, and follows `references/second-reviewer.md`.
 2. Spawn another fresh agent to verify every critical and major finding of the second pass (moderate
    ones too if the budget allows), following that file's "Verification" section.
-3. Merge the verified findings into your review as described there, and re-render it.
+3. Merge the two reports into one (required whenever I6 runs). The deliverable is a single consolidated
+   review, not a first review plus a separate second-pass report. Merging is editorial, not
+   another verification: it applies the verifier's verdicts as given and makes the combined report
+   consistent. Follow that file's "Merging into the review" section, and re-render.
 
 If you can't spawn agents, say so in the report and skip I6. Doing the second pass yourself repeats your
 own blind spots, which defeats its purpose. Budget about 1.5 times the first review. The second pass

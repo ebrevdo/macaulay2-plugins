@@ -85,6 +85,20 @@ with tempfile.TemporaryDirectory() as d:
     check('an unwritable report path fails without touching the JSON', r.returncode != 0 and open(jp).read() == before[0], r.stderr[-200:])
     check('no temporary files left behind', not [f for f in os.listdir(d) if '.tmp-' in f], os.listdir(d))
 
+# --- md_to_pdf: styled HTML always; a real PDF when a PDF engine is installed
+with tempfile.TemporaryDirectory() as d:
+    md = os.path.join(d, 'r.md')
+    open(md, 'w').write('# Title\n\n| a | b |\n|---|---|\n| 1 | `x` |\n\n```m2\nf = x -> x\n```\n')
+    r = run('md_to_pdf.py', md, '--html')
+    page = open(os.path.join(d, 'r.html')).read() if r.returncode == 0 else ''
+    check('md_to_pdf writes styled HTML with tables and code', '<table' in page and '<pre' in page and '@page' in page, r.stderr[-200:])
+    r = run('md_to_pdf.py', md)
+    if r.returncode == 2:
+        print('skip md_to_pdf PDF check (no PDF engine installed)')
+    else:
+        pdf = os.path.join(d, 'r.pdf')
+        check('md_to_pdf writes a PDF', r.returncode == 0 and open(pdf, 'rb').read(5) == b'%PDF-', r.stderr[-200:])
+
 # --- packaging: both marketplaces, both manifests, versions in sync, skill frontmatter
 REPO = os.path.normpath(os.path.join(HERE, '..', '..', '..'))
 claude_mk = json.load(open(os.path.join(REPO, '.claude-plugin', 'marketplace.json')))
