@@ -246,13 +246,36 @@ def process(review, src, check_only):
     return errors, warnings, mismatches
 
 
+def normalize_fences(text):
+    """Make code fences inside a text field well formed. A fence written mid-line moves to its own
+    line; text after a closing fence moves to the next line; an unclosed block is closed. Otherwise
+    one malformed fence turns the rest of the report into a code block or a code span."""
+    text = re.sub(r'(?<=\S)[ \t]*(```)', r'\n\1', text)        # a fence after other text on its line
+    out, fence = [], None
+    for line in text.split('\n'):
+        m = re.match(r'^(\s*)(```+|~~~+)(.*)$', line)
+        if m and fence is None:
+            fence = m.group(2)
+            out.append(line)
+        elif m and m.group(2).startswith(fence[0]) and len(m.group(2)) >= len(fence):
+            fence = None
+            out.append(m.group(1) + m.group(2))
+            if m.group(3).strip():
+                out += ['', m.group(3).strip()]
+        else:
+            out.append(line)
+    if fence:
+        out.append(fence)
+    return '\n'.join(out)
+
+
 def labeled(label, text):
     """A bold label followed by text. Text containing a fenced code block starts on its own line,
     because a fence only opens a code block at the start of a line; inline, it would turn the rest
     of the report into one long code span."""
     text = text.strip()
-    if re.search(r'^\s*(```|~~~)', text, re.M):
-        return f'**{label}**\n\n{text}\n'
+    if '```' in text or re.search(r'^\s*~~~', text, re.M):
+        return f'**{label}**\n\n{normalize_fences(text)}\n'
     return f'**{label}** {text}\n'
 
 

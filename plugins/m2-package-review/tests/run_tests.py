@@ -88,6 +88,16 @@ with tempfile.TemporaryDirectory() as d:
     r = run('render_report.py', jp, '--root', PKGS, '--out', mp)
     check('a fenced code block in a text field starts on its own line', r.returncode == 0 and '**Confirm / fix.**\n\n```m2' in open(mp).read(), r.stderr[-200:])
     open(jp, 'w').write(before[0])
+    for label, text in [('text after a closing fence', 'Run:\n```m2\nfooA 1\n``` Then guard it.'),
+                        ('a fence written mid-line', 'Run: ```m2\nfooA 1\n```\nThen guard it.'),
+                        ('an unclosed fence', '```m2\nfooA 1')]:
+        bad = json.loads(json.dumps(good)); bad['findings'][0]['confirm_or_fix'] = text; json.dump(bad, open(jp, 'w'))
+        r = run('render_report.py', jp, '--root', PKGS, '--out', mp)
+        out = open(mp).read()
+        body = out[out.index('**Confirm / fix.**'):]
+        fences = [l for l in body.split('\n') if l.strip().startswith('```')]
+        check(f'renderer normalizes {label}', r.returncode == 0 and len(fences) % 2 == 0 and all(l.strip() in ('```', '```m2') for l in fences), fences)
+        open(jp, 'w').write(before[0])
     check('no temporary files left behind', not [f for f in os.listdir(d) if '.tmp-' in f], os.listdir(d))
 
 # --- md_to_pdf: styled HTML always; a real PDF when a PDF engine is installed
