@@ -1,0 +1,6 @@
+interface:
+  display_name: "Macaulay2 Package Review"
+  short_description: "Evidence-based quality review of a Macaulay2 package"
+  default_prompt: "Review the Macaulay2 package at path/to/MyPackage.m2 using the m2-package-review skill."
+policy:
+  allow_implicit_invocation: true

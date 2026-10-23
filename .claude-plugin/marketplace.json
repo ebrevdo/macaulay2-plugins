@@ -1,0 +1,16 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "macaulay2-plugins",
+  "description": "Claude Code plugins for working with Macaulay2 packages",
+  "owner": {
+    "name": "Eugene Brevdo"
+  },
+  "plugins": [
+    {
+      "name": "m2-package-review",
+      "description": "Evidence-based quality review of any Macaulay2 package: API contracts, boundary correctness, test effectiveness, validation, side effects, documentation, and external tools, with required/important/optional tiers",
+      "source": "./plugins/m2-package-review",
+      "category": "development"
+    }
+  ]
+}

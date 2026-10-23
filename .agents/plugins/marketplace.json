@@ -1,0 +1,20 @@
+{
+  "name": "macaulay2-plugins",
+  "interface": {
+    "displayName": "Macaulay2 Plugins"
+  },
+  "plugins": [
+    {
+      "name": "m2-package-review",
+      "source": {
+        "source": "local",
+        "path": "./plugins/m2-package-review"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_USE"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+# Source material supplied for the case studies (large; obtain from its origin)
+Macaulay2_Individual_Package_Reports.zip
+m2-packages.zip
+# Duplicate of plugins/m2-package-review/skills/m2-package-review/references/style-guide.md
+Macaulay2_Package_Writing_Style_Guide.md
+
+__pycache__/
+*.pyc
+*.tmp-*

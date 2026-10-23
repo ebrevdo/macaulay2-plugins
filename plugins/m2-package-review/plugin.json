@@ -1,0 +1,22 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "m2-package-review",
+  "version": "0.5.0",
+  "description": "Evidence-based quality review of any Macaulay2 package: API contracts, boundary correctness, test effectiveness, validation, side effects, documentation, and external tools, with required/important/optional tiers",
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "Macaulay2 Package Review",
+        "shortDescription": "Evidence-based quality review of a Macaulay2 package",
+        "developerName": "Eugene Brevdo",
+        "category": "Developer Tools",
+        "capabilities": [
+          "Read"
+        ],
+        "defaultPrompt": [
+          "Review the Macaulay2 package at path/to/MyPackage.m2."
+        ]
+      }
+    }
+  }
+}
