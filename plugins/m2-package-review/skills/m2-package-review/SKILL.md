@@ -216,9 +216,6 @@ validates the fields, and produces the Markdown report. Don't type excerpts by h
 generator. Each finding's quoted evidence is at most 8 lines: for a longer citation, set
 `quote_start`/`quote_end` to the lines that show the problem, or put the location in `also_at`.
 If the renderer reports errors, fix the JSON and rerun it; it writes nothing until the review is valid.
-To share the report as a PDF, run `python3 -I <skill-dir>/scripts/md_to_pdf.py review.md`. Add
-`--source-url <URL of the package's directory on GitHub at the reviewed commit>` to make every
-`file.m2:line` citation a link to those lines.
 
 ## Step 3 — Important passes
 
@@ -304,6 +301,28 @@ and verification 160–185k.
 - **O3. Language-specific style guide.** Check conformance with `references/style-guide.md`, a local copy of the official guide; prefer the URL in its header when you can fetch it. This covers naming, argument order, multiple returns as sequences, layout, documentation prose, and JSAG rules. Report these as a short separate list unless the user asked for a style review.
 - **O4. Independent oracles.** Cross-check a combinatorial or mathematical claim by brute force, for example a small Python enumeration, or by comparing two strategies in M2.
 - **O5. Fixes.** Propose regression tests or patches for confirmed findings, but don't edit the package unless asked.
+
+## Step 5 — Deliver the report (Required)
+
+Make the PDF last, from the final `review.md`, once every pass has finished and any I6 merge has been
+rendered. A PDF made earlier would go stale as later passes change the report. Do this even if the
+user didn't mention a PDF, unless they asked not to have one.
+
+```bash
+python3 -I <skill-dir>/scripts/md_to_pdf.py review.md
+```
+
+- **Links (optional):** if you already know the URL of the package's directory on GitHub at the
+  reviewed commit, add `--source-url <URL>` to make every `file.m2:line` citation a link to those
+  lines. Don't spend time looking for it; the PDF is complete without it.
+- **No PDF:** exit status 2 means no engine could make one, and the script wrote a styled `review.html`
+  instead. Deliver that, and tell the user to open it in a browser and print to PDF. If the script says
+  a browser is installed, a sandbox may be blocking it, so say that the same command may work outside it.
+- **Any other failure:** deliver the Markdown and tell the user why there is no PDF.
+
+Finish by telling the user where the files are: `review.md`, and the PDF or HTML.
+
+A second reviewer or verifier (I6) skips this step; only the final, merged review gets a PDF.
 
 ## Severity rubric
 

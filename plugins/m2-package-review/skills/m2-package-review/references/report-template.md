@@ -7,7 +7,7 @@ end of this file. Cite lines; never type excerpts by hand.
 ```bash
 python3 -I <skill-dir>/scripts/render_report.py review.json --root <dir containing the package> --out review.md
 python3 -I <skill-dir>/scripts/render_report.py review.json --root <dir> --check   # verify only
-python3 -I <skill-dir>/scripts/md_to_pdf.py review.md                              # optional PDF
+python3 -I <skill-dir>/scripts/md_to_pdf.py review.md                              # last: the PDF (Step 5 of SKILL.md)
 ```
 
 `--root` is the directory the evidence paths are relative to: for a package at
@@ -96,6 +96,8 @@ Guidance:
   reviewed" is a valid result, provided `limitations` says what those parts were.
 
 ## What the renderer produces
+
+This Markdown is not the end of the review: Step 5 of SKILL.md turns the final version into the PDF.
 
 ~~~markdown
 # <Package> — package review

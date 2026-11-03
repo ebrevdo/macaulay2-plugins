@@ -17,8 +17,8 @@ What it adds to plain Markdown, when the document has the matching parts:
 
 Markdown -> HTML uses pandoc if installed, otherwise the Python `markdown` package.
 HTML -> PDF uses a headless Chrome/Chromium/Edge if one is found, otherwise WeasyPrint, otherwise
-wkhtmltopdf. If no PDF engine is available, the styled HTML is written instead (open it in a browser
-and print to PDF) and the script exits with status 2.
+wkhtmltopdf. If no engine is installed, or none can make a PDF here, the styled HTML is written instead
+(open it in a browser and print to PDF) and the script exits with status 2.
 """
 import argparse
 import html
@@ -262,7 +262,7 @@ def find_browser():
 
 
 def html_to_pdf(html_path, pdf_path):
-    """Write pdf_path from html_path; return the engine used, or None if no engine is available."""
+    """Write pdf_path from html_path; return the engine used, or None if no engine could make one."""
     browser = find_browser()
     if browser:
         with tempfile.TemporaryDirectory() as profile:  # throwaway profile: never touch the user's
@@ -272,7 +272,7 @@ def html_to_pdf(html_path, pdf_path):
                        f'--print-to-pdf={pdf_path}', Path(html_path).as_uri()]
                 try:
                     subprocess.run(cmd, capture_output=True, timeout=180)
-                except subprocess.TimeoutExpired:
+                except (subprocess.TimeoutExpired, OSError):
                     continue
                 if os.path.exists(pdf_path) and os.path.getsize(pdf_path) > 0:
                     return 'chrome'
@@ -280,13 +280,16 @@ def html_to_pdf(html_path, pdf_path):
         import weasyprint
         weasyprint.HTML(filename=html_path).write_pdf(pdf_path)
         return 'weasyprint'
-    except ImportError:
+    except (ImportError, OSError):
         pass
     for tool, args in (('weasyprint', [html_path, pdf_path]),
                        ('wkhtmltopdf', ['--quiet', '--encoding', 'utf-8', html_path, pdf_path])):
         if shutil.which(tool):
-            subprocess.run([tool, *args], check=True, capture_output=True)
-            return tool
+            try:
+                subprocess.run([tool, *args], check=True, capture_output=True)
+                return tool
+            except (subprocess.CalledProcessError, OSError):
+                continue
     return None
 
 
@@ -304,8 +307,10 @@ def convert(md_path, out_path, html_only, source_url=None, toc=True, page=DEFAUL
         if engine is None:
             fallback = str(Path(out_path).with_suffix('.html'))
             shutil.copyfile(hp, fallback)
-            print(f'md_to_pdf: no PDF engine found (Chrome/Chromium/Edge, WeasyPrint, or wkhtmltopdf); '
-                  f'wrote {fallback} instead -- open it in a browser and print to PDF', file=sys.stderr)
+            browser = find_browser()
+            reason = (f'{browser} is installed but could not make a PDF here (a sandbox may be blocking it)' if browser
+                      else 'no PDF engine found (Chrome/Chromium/Edge, WeasyPrint, or wkhtmltopdf)')
+            print(f'md_to_pdf: {reason}; wrote {fallback} instead -- open it in a browser and print to PDF', file=sys.stderr)
             return None
         shutil.move(pp, out_path)
         return engine

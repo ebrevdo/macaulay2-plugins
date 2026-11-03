@@ -25,8 +25,9 @@ It bundles:
   verify.
 - `scripts/render_report.py`, which renders the review from its JSON. It quotes every excerpt
   verbatim from the cited lines, and validates the review before writing anything.
-- `scripts/md_to_pdf.py`, which turns a report into a formatted PDF. It uses pandoc or Python-Markdown,
-  and headless Chrome/Chromium/Edge, WeasyPrint, or wkhtmltopdf.
+- `scripts/md_to_pdf.py`, which turns the final report into a formatted PDF as the last step of a
+  review. It uses pandoc or Python-Markdown, and headless Chrome/Chromium/Edge, WeasyPrint, or
+  wkhtmltopdf.
 - `references/checklist.md`, the per-pass questions and real defect shapes.
 - `references/report-template.md`, the review JSON schema and the rendered report structure.
 - `references/second-reviewer.md`, the second-reviewer pass, its verification, and how to merge the results.

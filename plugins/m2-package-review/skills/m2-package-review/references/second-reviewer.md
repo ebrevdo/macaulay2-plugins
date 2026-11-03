@@ -36,6 +36,7 @@ representation round trips and caches, and dependency interactions. Spend your e
   title it extends in `what_happens`.
 - The usual JSON, rendered with `scripts/render_report.py`, with a `boundary_sweep` table covering every
   central function. In `limitations`, list the central functions you chose and what you did not reach.
+- Stop at the rendered Markdown. Don't make a PDF; only the merged review gets one.
 - Prefer fewer well-traced findings. A static second pass that adds two verified major defects is a
   success; ten speculative ones are not.
 
@@ -89,7 +90,7 @@ question rather than silently changing a claim.
   unverified claims.
 - **Metadata:** list I6 among the completed passes. The renderer recomputes the severity counts.
 - **Render:** run `scripts/render_report.py` on the merged JSON. It re-quotes every excerpt from the
-  source and validates the result.
+  source and validates the result. Then make the PDF from the merged report (Step 5 of SKILL.md).
 
 ## Prompts
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Regression tests for the review scripts. Run: python3 -I tests/run_tests.py (from the plugin directory)."""
-import json, os, subprocess, sys, tempfile
+import json, os, re, subprocess, sys, tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPTS = os.environ.get('M2REVIEW_SCRIPTS') or os.path.join(HERE, '..', 'skills', 'm2-package-review', 'scripts')
 PKGS = os.path.join(HERE, 'fixtures', 'pkgs')
@@ -124,6 +124,21 @@ with tempfile.TemporaryDirectory() as d:
     else:
         pdf = os.path.join(d, 'r.pdf')
         check('md_to_pdf writes a PDF', r.returncode == 0 and open(pdf, 'rb').read(5) == b'%PDF-', r.stderr[-200:])
+    # a browser that is installed but can't run (as in a sandbox) is not the same as no engine
+    src = open(os.path.join(SCRIPTS, 'md_to_pdf.py')).read()
+    first = re.search(r"BROWSERS\s*=\s*[\(\[]\s*'([^']+)'", src).group(1)
+    bindir = os.path.join(d, 'bin'); os.mkdir(bindir)
+    fake = os.path.join(bindir, os.path.basename(first))
+    open(fake, 'w').write('#!/bin/sh\nexit 1\n'); os.chmod(fake, 0o755)
+    os.remove(os.path.join(d, 'r.html')) if os.path.exists(os.path.join(d, 'r.html')) else None
+    r = subprocess.run([sys.executable, '-I', os.path.join(SCRIPTS, 'md_to_pdf.py'), md, '-o', os.path.join(d, 'blocked.pdf')],
+                       capture_output=True, text=True, env=dict(os.environ, PATH=bindir + os.pathsep + os.environ.get('PATH', '')))
+    if r.returncode == 2:
+        check('md_to_pdf says a browser is installed but failed, not that none was found',
+              'could not make a PDF here' in r.stderr and 'no PDF engine found' not in r.stderr, r.stderr[-300:])
+        check('md_to_pdf falls back to HTML when the browser fails', os.path.exists(os.path.join(d, 'blocked.html')))
+    else:
+        print('skip blocked-browser check (another PDF engine is installed)')
 
 # --- packaging: both marketplaces, both manifests, versions in sync, skill frontmatter
 REPO = os.path.normpath(os.path.join(HERE, '..', '..', '..'))
