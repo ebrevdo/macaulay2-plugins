@@ -156,19 +156,20 @@ def enhance(body, source_url=None, toc=True):
             continue
         e = starts[i + 1] if i + 1 < len(starts) else len(body)
         chunk = body[s:e]
-        sev = re.search(r'Severity:</strong>\s*([1-4])', chunk)
+        sev = re.search(r'Severity:</strong>\s*(?:[1-4]\s+)?(Critical|Major|Moderate|Minor)', chunk)
+        level = SEV_WORDS[sev.group(1).lower()] if sev else None
         fid = re.match(r'<h4 id="([^"]+)"', chunk).group(1)
         if fid in findings and sev:
-            findings[fid][1] = sev.group(1)
+            findings[fid][1] = level
         out.append(body[pos:s])
-        out.append(f'<div class="finding sev-{sev.group(1) if sev else 0}">' + chunk.rstrip() + '</div>\n')
+        out.append(f'<div class="finding sev-{level or 0}">' + chunk.rstrip() + '</div>\n')
         pos = e
     out.append(body[pos:])
     body = ''.join(out)
 
     # Pills for severity, certainty and kind; chips for the severity counts.
-    body = re.sub(r'(<strong>Severity:</strong>)\s*([1-4]) (Critical|Major|Moderate|Minor)',
-                  r'\1 <span class="pill sev-\2">\2 \3</span>', body)
+    body = re.sub(r'(<strong>Severity:</strong>)\s*(?:[1-4]\s+)?(Critical|Major|Moderate|Minor)',
+                  lambda m: f'{m.group(1)} <span class="pill sev-{SEV_WORDS[m.group(2).lower()]}">{m.group(2)}</span>', body)
     body = re.sub(r'(<strong>Certainty:</strong>)\s*(definite|probable|speculative)',
                   r'\1 <span class="pill cert-\2">\2</span>', body)
     body = re.sub(r'(<strong>Kind:</strong>)\s*([a-z][a-z-]+)', r'\1 <span class="pill kind">\2</span>', body)
@@ -214,6 +215,7 @@ def enhance(body, source_url=None, toc=True):
 
     # Color boundary-sweep outcomes and verdict cells.
     body = re.sub(r'<td>(ok|unclear)</td>', r'<td class="out-\1">\1</td>', body)
+    body = body.replace('<td>yes</td>', '<td class="out-ok">yes</td>').replace('<td>no</td>', '<td class="out-finding">no</td>')
     body = re.sub(r'<td>n/a</td>', '<td class="out-na">n/a</td>', body)
     body = re.sub(r'<td>(see <a class="xref")', r'<td class="out-finding">\1', body)
     body = re.sub(r'<td>(Confirmed)</td>', r'<td class="v-good">\1</td>', body)

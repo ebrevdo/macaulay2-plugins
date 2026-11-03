@@ -15,6 +15,7 @@ import argparse
 import json
 import os
 import re
+import shutil
 import sys
 from collections import Counter, defaultdict
 
@@ -22,6 +23,12 @@ END_RE = re.compile(r'^\s*end(\b|-|;|\s*$)')
 LOAD_RE = re.compile(r'^\s*(?:load|needs)\b.*?"([^"]+\.m2)"')
 TEST_OPEN_RE = re.compile(r'\bTEST\s*///')
 UNREGISTERED_TEST_RE = re.compile(r'///\s*TEST\b')
+TEST_GET_RE = re.compile(r'\bTEST\s*\(?\s*get\b.*"([^"]+)"')
+DIAGNOSTIC_OPTIONS = {'Verbose', 'Verbosity', 'DebugLevel'}  # change output, not results; no test required
+# Core#"preloaded packages" plus Core: always available, so their functions need no See also entry
+PRELOADED_PACKAGES = {'Core', 'Elimination', 'LLLBases', 'IntegralClosure', 'PrimaryDecomposition', 'MinimalPrimes',
+                      'Saturation', 'Classic', 'TangentCone', 'ReesAlgebra', 'ConwayPolynomials', 'InverseSystems',
+                      'SimpleDoc', 'OnlineLookup', 'Isomorphism', 'Varieties', 'PackageCitations'}
 STATEMENT_START = r'(?:^|;|\bthen\b|\belse\b|\bdo\b)'
 
 
@@ -93,8 +100,15 @@ def segments(s, in_block=False, in_triple=False, in_dq=False):
             else:
                 cur.append(s[i]); i += 1
         elif ctx == 'triple':
-            if s.startswith('///', i):
-                flush(); segs.append(('close', '///')); ctx = 'code'; i += 3
+            if s[i] == '/':  # inside ///, a run of slashes ends the string only if it is odd and at least 3 long
+                j = i
+                while j < len(s) and s[j] == '/':
+                    j += 1
+                if j - i >= 3 and (j - i) % 2:
+                    cur.append(s[i:j - 3]); flush(); segs.append(('close', '///')); ctx = 'code'
+                else:
+                    cur.append(s[i:j])
+                i = j
             else:
                 cur.append(s[i]); i += 1
         elif ctx == 'dq':
@@ -310,7 +324,7 @@ def parse_doc_nodes(doc):
         s, ind = l.raw.strip(), len(l.raw) - len(l.raw.lstrip())
         if s == 'Key' or re.search(r'\bdocument\s*\{', l.raw):
             close()
-            cur = dict(line=l, keys=[], outputs=[], example=False, section=None, sec_ind=ind, item_ind=None, simple=(s == 'Key'))
+            cur = dict(line=l, lines=[l], keys=[], outputs=[], example=False, section=None, sec_ind=ind, item_ind=None, simple=(s == 'Key'))
             if not cur['simple']:
                 m = re.search(r'Key\s*=>\s*(\{[^}]*\}|[^,\n]+)', l.raw)
                 if m:
@@ -323,6 +337,7 @@ def parse_doc_nodes(doc):
             continue
         if '///' in l.raw and cur['simple']:
             close(); cur = None; continue
+        cur['lines'].append(l)
         if 'EXAMPLE' in l.raw or s in ('Example', 'CannedExample'):
             cur['example'] = True
         if not cur['simple']:
@@ -376,6 +391,285 @@ def balanced_args(s, start):
     return s[start + 1:]
 
 
+def option_keys(s):
+    """Top-level keys of the {...} list that s starts with; none if s isn't a literal list (e.g. `options f`)."""
+    s = no_strings(s)
+    if not s.startswith('{'):
+        return []
+    depth, items, start = 0, [], 1
+    for j, c in enumerate(s):
+        if c in '{([':
+            depth += 1
+        elif c in '})]':
+            depth -= 1
+            if depth == 0:
+                items.append(s[start:j])
+                break
+        elif c == ',' and depth == 1:
+            items.append(s[start:j])
+            start = j + 1
+    keys = (re.match(r'\s*(?:symbol\s+)?([A-Za-z]\w*)\s*=>', it) for it in items)
+    return [k.group(1) for k in keys if k]
+
+
+def code_chars(s, i=0):
+    """Yield (index, char) for the characters of s outside "..." and /// strings."""
+    while i < len(s):
+        if s.startswith('///', i):
+            j = s.find('///', i + 3)
+            i = len(s) if j < 0 else j + 3
+        elif s[i] == '"':
+            i += 1
+            while i < len(s) and s[i] != '"':
+                i += 2 if s[i] == '\\' else 1
+            i += 1
+        else:
+            yield i, s[i]
+            i += 1
+
+
+def enclosed(s, i):
+    """The text inside the bracket at s[i], skipping strings; to the end of s if it never closes."""
+    depth = 0
+    for j, c in code_chars(s, i):
+        if c in '{([':
+            depth += 1
+        elif c in '})]':
+            depth -= 1
+            if depth == 0:
+                return s[i + 1:j]
+    return s[i + 1:]
+
+
+def split_top(s, sep=','):
+    """Split s on sep outside brackets and strings."""
+    items, depth, start = [], 0, 0
+    for j, c in code_chars(s):
+        if c in '{([':
+            depth += 1
+        elif c in '})]':
+            depth -= 1
+        elif depth == 0 and s.startswith(sep, j):
+            items.append(s[start:j])
+            start = j + len(sep)
+    items.append(s[start:])
+    return [x.strip() for x in items if x.strip()]
+
+
+def old_field(body, name):
+    """The value of `name => ...` at the top level of a document{} body, or None."""
+    depth, field = 0, re.compile(r'\b' + name + r'\s*=>\s*')
+    for j, c in code_chars(body):
+        if c in '{([':
+            depth += 1
+        elif c in '})]':
+            depth -= 1
+        elif depth == 0:
+            m = field.match(body, j)
+            if m:
+                return enclosed(body, m.end()) if body[m.end():m.end() + 1] in ('{', '(') else (split_top(body[m.end():]) or [''])[0]
+    return None
+
+
+def old_examples(body):
+    """The code of each EXAMPLE in a document{} body."""
+    out = []
+    for m in re.finditer(r'\bEXAMPLE\b\s*(?:lines\s*)?', body):
+        i = m.end()
+        if body.startswith('///', i):
+            j = body.find('///', i + 3)
+            out.append(body[i + 3:j if j >= 0 else len(body)])
+        elif body[i:i + 1] in ('{', '('):
+            out.append(enclosed(body, i))
+        elif body[i:i + 1] == '"':
+            q = re.match(r'"(?:[^"\\]|\\.)*"', body[i:])
+            out.append(q.group(0) if q else '')
+    return out
+
+
+def has_text(s):
+    """Whether s holds a string with words in it, so that someone wrote a description."""
+    return bool(re.search(r'"[^"]*[A-Za-z][^"]*"|///', s))
+
+
+def old_entry(x, all_options):
+    """One item of an old-style Inputs or Outputs list."""
+    parts = split_top(x, '=>')
+    first = parts[0] if parts else x
+    rest = ' '.join(parts[1:])
+    opt = re.fullmatch(r"\[\s*[A-Za-z][\w']*\s*,\s*([A-Za-z][\w']*)\s*\]", first)
+    if opt:
+        return dict(name=opt.group(1), type=None, option=True, described=has_text(rest))
+    if first.startswith('"') and len(parts) > 1:
+        ty = parts[1] if re.fullmatch(r"[A-Z][\w']*", parts[1]) else None
+        return dict(name=first.strip('"'), type=ty, option=False, described=has_text(rest))
+    if first.startswith(('"', '{', '(')):
+        return dict(name='(unnamed)', type=None, option=False, described=has_text(first))
+    return dict(name=first, type=None, option=first in all_options, described=has_text(rest))
+
+
+def simple_entry(head, deeper):
+    """One item of a SimpleDoc Inputs or Outputs section; deeper is whether indented text follows it."""
+    m = re.match(r"([A-Za-z][\w']*)\s*=>\s*(.*)", head)
+    if m:
+        words = m.group(2).split()
+        return dict(name=m.group(1), type=words[0] if words else None, option=True, described=deeper or len(words) > 1 or has_text(head))
+    m = re.match(r"([\w']*)\s*:\s*(.*)", head)
+    if m:
+        words = m.group(2).split()
+        return dict(name=m.group(1) or (words[0] if words else '(unnamed)'), type=(words[0] if words and m.group(1) else None),
+                    option=False, described=deeper or len(words) > 1)
+    words = head.split()
+    if len(words) == 1:
+        return dict(name=words[0], type=None, option=False, described=deeper)
+    return dict(name='(unnamed)', type=None, option=False, described=True)
+
+
+def node_fields(n, all_options):
+    """Keys, inputs, outputs, See also, examples and prose of one documentation node, in either format."""
+    if n['simple']:
+        base = len(n['lines'][0].raw.expandtabs(8)) - len(n['lines'][0].raw.expandtabs(8).lstrip())
+        secs, cur = {}, None
+        for l in n['lines']:
+            raw = l.raw.expandtabs(8)
+            s, ind = raw.strip(), len(raw) - len(raw.lstrip())
+            if s in DOC_SECTIONS and ind <= base:
+                cur = s
+                secs.setdefault(cur, [])
+            elif cur and s:
+                secs[cur].append((ind, s))
+
+        def entries(rows):
+            items, at = [], None
+            for ind, s in rows:
+                at = ind if at is None else at
+                if ind <= at:
+                    items.append([s, False])
+                elif items:
+                    items[-1][1] = True
+            return [simple_entry(*it) for it in items]
+        examples, canned, prose, block = [], 0, [], None
+        rows = secs.get('Description', [])
+        at = rows[0][0] if rows else 0
+        for ind, s in rows:
+            if ind <= at and s in ('Example', 'CannedExample', 'Text', 'Code', 'Pre', 'Tree'):
+                block = s
+                if s in ('Example', 'CannedExample'):
+                    examples.append([])
+                    canned += s == 'CannedExample'
+            elif block in ('Example', 'CannedExample'):
+                examples[-1].append(s)
+            else:
+                prose.append(s)
+        for k in ('Example', 'CannedExample'):
+            if k in secs:
+                examples.append([s for _, s in secs[k]])
+                canned += k == 'CannedExample'
+        text = lambda k: '\n'.join(s for _, s in secs.get(k, []))
+        keys = [s for _, s in secs.get('Key', [])]
+        fields = dict(inputs=entries(secs.get('Inputs', [])), outputs=entries(secs.get('Outputs', [])),
+                      io_text=text('Inputs') + '\n' + text('Outputs'), see_also=text('SeeAlso'),
+                      examples=['\n'.join(e) for e in examples], canned=canned,
+                      prose='\n'.join(prose + [text('Headline'), text('Caveat'), text('Consequences')]))
+    else:
+        text = '\n'.join(strip_comment(l.raw) for l in n['lines'])
+        at = text.find('{', text.find('document'))
+        body = enclosed(text, at) if at >= 0 else text
+        inputs, outputs = old_field(body, 'Inputs') or '', old_field(body, 'Outputs') or ''
+        see_also, key = old_field(body, 'SeeAlso') or '', old_field(body, 'Key') or ''
+        examples = old_examples(body)
+        prose = body
+        for v in [key, inputs, outputs, see_also] + examples:
+            if v:
+                prose = prose.replace(v, '')
+        keys = split_top(key)
+        fields = dict(inputs=[old_entry(x, all_options) for x in split_top(inputs)],
+                      outputs=[old_entry(x, all_options) for x in split_top(outputs)],
+                      io_text=inputs + '\n' + outputs, see_also=see_also, examples=examples, canned=0, prose=prose)
+    for e in fields['inputs']:
+        e['option'] = e['option'] or e['name'] in all_options
+    funcs, options = set(), set()
+    for k in keys:
+        k = k.strip().strip('"')
+        opt = re.match(r"\[\s*\(?\s*([A-Za-z][\w']*)[^\]]*,\s*([A-Za-z][\w']*)\s*\]", k)
+        if opt:
+            options.add(opt.groups())
+            continue
+        m = re.match(r"\(?\s*([A-Za-z][\w']*)", k)
+        if m:
+            funcs.add(m.group(1))
+    fields.update(funcs=funcs, options=options, loc=n['line'].loc())
+    return fields
+
+
+def uses_name(pattern_text, name):
+    return re.search(r"(?<![\w'])" + re.escape(name) + r"(?![\w'])", pattern_text) is not None
+
+
+def doc_audit(nodes, funcs, opt_methods, sigs, universe):
+    """A prefilled documentation table per exported function. The scanner can tell whether an item is
+    listed and whether anyone wrote a line for it, how many examples there are, and what is missing
+    from See also. The reviewer judges limits and correctness, which stay null until filled in."""
+    all_options = {o for opts in opt_methods.values() for o in opts}
+    fields = [node_fields(n, all_options) for n in nodes]
+    tables = []
+    for f in funcs:
+        own = [x for x in fields if f in x['funcs']]
+        opt_nodes = [x for x in fields if any(a == f for a, _ in x['options'])]
+        items, index = [], {}
+
+        def add(kind, name, ty, documented, described):
+            at = index.get((kind, name))
+            if at is None:
+                index[(kind, name)] = at = dict(item=name, kind=kind, type=ty, documented='no', described='no', limits=None, correct=None)
+                items.append(at)
+            if documented:
+                at['documented'] = 'yes'
+            if described:
+                at['described'] = 'yes'
+        pages = own + [x for x in opt_nodes if x not in own]
+        listed = {e['name']: e for x in pages for e in x['inputs'] if e['option']}
+        for o in list(dict.fromkeys(opt_methods.get(f, []))) + [o for o in listed if o not in opt_methods.get(f, [])]:
+            keyed = [x for x in opt_nodes if (f, o) in x['options']]
+            alone = any(not x['funcs'] and (x['prose'].strip() or x['io_text'].strip()) for x in keyed)
+            mentioned = any(uses_name(x['prose'], o) for x in pages)
+            e = listed.get(o)
+            add('option', o, e['type'] if e else None, bool(e or keyed or mentioned), bool((e and e['described']) or alone or mentioned))
+        for x in pages:
+            for e in x['inputs']:
+                if not e['option']:
+                    add('input', e['name'], e['type'], True, e['described'])
+        overloads = sorted(sig for (name, sig) in sigs if name == f)
+        if not any(it['kind'] == 'input' for it in items):
+            for sig in overloads or ['argument']:
+                add('input', f'({sig})', None, False, False)
+        for x in pages:
+            for e in x['outputs']:
+                add('output', e['name'], e['type'], True, e['described'])
+        if not any(it['kind'] == 'output' for it in items):
+            add('output', '(return value)', None, False, False)
+        examples = [e for x in own for e in x['examples']]
+        code = '\n'.join(strip_comment(ln) for e in examples for ln in e.split('\n'))
+        io_text = '\n'.join(x['io_text'] for x in own)
+        see_also = '\n'.join(x['see_also'] for x in own)
+        missing = [u for u in sorted(universe) if u != f and not uses_name(see_also, u)
+                   and (uses_name(code, u) or re.search(r'\bTO2?[\s{("]*' + re.escape(u) + r"(?![\w'])", io_text))]
+        tables.append(dict(function=f, overloads=overloads, doc_nodes=[x['loc'] for x in pages], examples=len(examples),
+                           canned_examples=sum(x['canned'] for x in own), examples_correct=None if examples else 'n/a',
+                           see_also_missing=missing, items=items))
+    return tables
+
+
+def package_functions(path):
+    """Exported functions of another package, for the See-also check."""
+    _, raw, _, _, _, _ = load_package(path)
+    code = '\n'.join(strip_comment(ln) for _, _, ln in raw)
+    names = set()
+    for m in re.finditer(r'\bexport(?:Mutable)?\s*\{(.*?)\}', code, re.S):
+        names |= {a or b for a, b in re.findall(r'"([^"]+)"|\b([A-Za-z][A-Za-z0-9\']*)\b', m.group(1))}
+    return {n for n in names if re.search(r'(?m)^\s*' + re.escape(n) + r'\s*(=|\(|[A-Z])', code)}
+
+
 def scan(entry):
     root, raw_lines, loaded, post_end, missing, deferred_loads = load_package(entry)
     L = classify(raw_lines)
@@ -425,10 +719,24 @@ def scan(entry):
     test_summary, test_files = [], []
 
     helper_code = []
+    skipped_tests = set()
+    running_bodies = []
+
+    def helper_asserts(p):
+        """Asserts in a file that runs as part of a test, not at package load, so it is parsed with
+        the same end-aware loader (following its own nested loads)."""
+        _, hl, hfiles, _, _, _ = load_package(p)
+        base_dir = os.path.dirname(p)
+        for hf in hfiles:
+            rel = os.path.relpath(os.path.normpath(os.path.join(base_dir, hf)), root)
+            if rel not in test_files:
+                test_files.append(rel)
+        code = '\n'.join(x.code for x in classify(hl))
+        helper_code.append(code)
+        return len(re.findall(r'\bassert\b', no_strings(code)))
 
     def test_loaded_asserts(ls):
-        """Asserts in files a TEST body loads. They run as part of that test, not at package load, so
-        they are parsed with the same end-aware loader (following their own nested loads)."""
+        """Asserts in files a TEST body loads."""
         n = 0
         for l in ls:
             m = LOAD_RE.match(l.code)
@@ -438,23 +746,23 @@ def scan(entry):
                 p = os.path.normpath(os.path.join(base, m.group(1)))
                 if os.path.isfile(p):
                     try:
-                        _, hl, hfiles, _, _, _ = load_package(p)
+                        n += helper_asserts(p)
                     except Exception:
-                        break
-                    base_dir = os.path.dirname(p)
-                    for hf in hfiles:
-                        rel = os.path.relpath(os.path.normpath(os.path.join(base_dir, hf)), root)
-                        if rel not in test_files:
-                            test_files.append(rel)
-                    code = '\n'.join(x.code for x in classify(hl))
-                    helper_code.append(code)
-                    n += len(re.findall(r'\bassert\b', no_strings(code)))
+                        pass
                     break
         return n
     for tid, ls in blocks.items():
         code = '\n'.join(l.code for l in ls)
+        mark = len(helper_code)
         n_assert = len(re.findall(r'\bassert\b', no_strings(code))) + test_loaded_asserts(ls)
         test_summary.append(dict(loc=ls[0].loc(), lines=len(ls), asserts=n_assert))
+        if any('no-check-flag' in l.raw for l in ls):  # check matches the flag anywhere in the test, comments too
+            skipped_tests.add(tid)
+            del helper_code[mark:]
+            test_summary[-1]['skipped'] = True
+            hit('T6 TEST skipped with no-check-flag (check never runs it)', ls[0])
+        else:
+            running_bodies.append(code + '\n' + '\n'.join(helper_code[mark:]))
         if n_assert == 0 and not re.search(r'\berror\b', no_strings(code)):
             hit('T1 TEST block with no assert', ls[0], f'{len(ls)} lines')
         for st in statements(ls):
@@ -473,6 +781,32 @@ def scan(entry):
             c = l.code
             if re.search(r'\btry\b.*\bfalse\s*\)\s*else\s*true', c) or re.search(r'\btry\b.*\bthen\s+false\s+else\s+true', c):
                 hit('T3 catch-all negative test (any error passes)', l)
+    # a test registered from a whole file: TEST get(currentFileDirectory | "x.m2"), or with "auxiliary files"
+    for l in L:
+        m = TEST_GET_RE.search(l.code) if l.region != 'test' else None
+        if not m:
+            continue
+        pkg_dir = os.path.join(root, os.path.basename(entry)[:-3])
+        p = next((c for c in (os.path.normpath(os.path.join(b, m.group(1)))
+                              for b in (os.path.dirname(os.path.join(root, l.file)), pkg_dir, root)) if os.path.isfile(c)), None)
+        n_assert, mark = 0, len(helper_code)
+        skipped = False
+        if p:
+            with open(p, encoding='utf-8', errors='replace') as fh:
+                skipped = 'no-check-flag' in fh.read()
+            try:
+                n_assert = helper_asserts(p)
+            except Exception:
+                pass
+        test_summary.append(dict(loc=l.loc(), lines=1, asserts=n_assert))
+        if p and n_assert == 0 and not re.search(r'\berror\b', no_strings('\n'.join(helper_code[mark:]))):
+            hit('T1 TEST block with no assert', l, os.path.relpath(p, root))
+        if skipped:
+            del helper_code[mark:]
+            test_summary[-1]['skipped'] = True
+            hit('T6 TEST skipped with no-check-flag (check never runs it)', l)
+        else:
+            running_bodies.append('\n'.join(helper_code[mark:]))
     for l in L:
         if UNREGISTERED_TEST_RE.search(l.raw) and not l.raw.lstrip().startswith('--'):
             hit('T4 "///TEST" opens a string, not a registered TEST', l)
@@ -500,9 +834,9 @@ def scan(entry):
     opt_methods = {}
     for m in re.finditer(r'\b([A-Za-z]\w*)\s*=\s*method\s*\(', impl_text):
         args = balanced_args(impl_text, m.end() - 1)
-        om_ = re.search(r'\bOptions\s*=>\s*(?!true\b)(.*)', args, re.S)
+        om_ = re.search(r'\bOptions\s*=>\s*(?!true\b)', args)
         if om_:
-            opt_methods[m.group(1)] = re.findall(r'\b([A-Z]\w*)\s*=>', om_.group(1))
+            opt_methods[m.group(1)] = option_keys(args[om_.end():])
     install_re = re.compile(r'^\s*([A-Za-z]\w*)(?:\s*(\([^)]*\))|\s+([A-Z]\w*))\s*:=\s*(?:[A-Z]\w*\s*=>\s*)?(.*)$')
     sigs = Counter()
     sig_lines = defaultdict(list)
@@ -685,9 +1019,33 @@ def scan(entry):
     for n in no_example:
         label = ', '.join(nm for _, nm, _ in n['parsed'][:2]) or '?'
         hit('D2 documentation node without an example', n['line'], label[:80])
-    test_text = no_strings('\n'.join([l.code for l in tst] + helper_code))
+    test_text = no_strings('\n'.join([l.code for l in tst if l.test_id not in skipped_tests] + helper_code))
     funcs = sorted(e for e in exports if e in installed_names)
     untested = [f for f in funcs if not re.search(r'(?<![\w\'])' + re.escape(f) + r'(?![\w\'])', test_text)]
+
+    # ---------- options of exported methods that no running TEST sets, at all or on a call to that method
+    exported_options, options_never, options_elsewhere = 0, [], []
+    coverage_rows, bodies = [], [no_strings(b) for b in running_bodies]
+    for f in funcs:
+        calls = [balanced_args(test_text, m.end() - 1) for m in re.finditer(r"(?<![\w'])" + re.escape(f) + r'\s*\(', test_text)]
+        set_on_calls, not_set = [], []
+        for o in dict.fromkeys(opt_methods.get(f, [])):
+            if o in DIAGNOSTIC_OPTIONS:
+                continue
+            exported_options += 1
+            set_re = re.compile(r'\b' + re.escape(o) + r'\s*=>')
+            on_call = any(set_re.search(c) for c in calls)
+            (set_on_calls if on_call else not_set).append(o)
+            if not set_re.search(test_text):
+                options_never.append(f'{f}: {o}')
+            elif not on_call:
+                options_elsewhere.append(f'{f}: {o}')
+        running = sum(uses_name(b, f) for b in bodies)
+        # setting an option in a test doesn't show the test would notice it being ignored, so the reviewer sorts them
+        undecided = set_on_calls or not_set
+        coverage_rows.append(dict(function=f, running_tests=running, asserts_on_result=None if running else 'no',
+                                  options_set_in_tests=set_on_calls, options_not_set=not_set,
+                                  options_tested=None if undecided else [], options_not_tested=None if undecided else []))
 
     # ---------- per-export validation: exported functions with no error() on any path they reach
     defs = defaultdict(list)          # name -> body texts of every definition/overload
@@ -813,10 +1171,11 @@ def scan(entry):
     # ---------- dependency seams: methods installed on functions and types the package does not own
     own_types = set(re.findall(r"(?m)^\s*([A-Z][\w']*)\s*=\s*new\s+(?:Type|HeaderType|SelfInitializingType|WrapperType)\s+of\b", impl_text))
     deps = []
-    hdr = re.search(r'newPackage\s*\((.*?)\n\s*\)', impl_text, re.S)
+    hdr = re.search(r'newPackage\s*\(', impl_text)
     if hdr:
+        header = balanced_args(impl_text, hdr.end() - 1)
         for key in ('PackageImports', 'PackageExports'):
-            mm = re.search(key + r'\s*=>\s*\{([^}]*)\}', hdr.group(1))
+            mm = re.search(key + r'\s*=>\s*\{([^}]*)\}', header)
             if mm:
                 deps += re.findall(r'"([^"]+)"', mm.group(1))
     dep_installs, dep_checked = {}, []
@@ -835,6 +1194,19 @@ def scan(entry):
                         sig = re.sub(r'\s', '', mi.group(2) or mi.group(3) or '').strip('()')
                         dep_installs.setdefault((mi.group(1), sig), f'{dep}/{df}:{dno}')
                 break
+    # ---------- per-function documentation tables; only non-preloaded dependencies count for See also
+    universe, deps_unread = set(funcs), []
+    m2 = shutil.which('M2')
+    m2_share = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(m2))), 'share', 'Macaulay2') if m2 else None
+    for dep in sorted(set(deps) - PRELOADED_PACKAGES):
+        cands = [os.path.join(root, dep + '.m2'), os.path.join(os.path.dirname(root), dep + '.m2'),
+                 os.path.join(os.path.dirname(root), dep, dep + '.m2')] + ([os.path.join(m2_share, dep + '.m2')] if m2_share else [])
+        found = next((c for c in cands if os.path.isfile(c) and os.path.abspath(c) != os.path.abspath(entry)), None)
+        try:
+            universe |= package_functions(found)
+        except Exception:
+            deps_unread.append(dep)
+    audit = doc_audit(nodes, funcs, opt_methods, sigs, universe)
     foreign = []
     for l in impl:
         m = ret_re.match(l.code)
@@ -864,8 +1236,14 @@ def scan(entry):
         doc_example_blocks=examples,
         tests=len(test_summary), asserts=sum(t['asserts'] for t in test_summary),
         tests_without_assert=sum(1 for t in test_summary if t['asserts'] == 0),
+        tests_skipped=sum(1 for t in test_summary if t.get('skipped')),
         doc_nodes=len(nodes), doc_nodes_without_example=len(no_example),
         exported_functions=len(funcs), exported_functions_never_in_tests=untested,
+        doc_audit=audit, doc_audit_deps_unread=deps_unread,
+        test_coverage=dict(running=sum(1 for t in test_summary if not t.get('skipped')), skipped=sum(1 for t in test_summary if t.get('skipped')),
+                           total_time=None, slowest_test=None, functions=coverage_rows),
+        exported_options=exported_options, options_never_in_tests=options_never,
+        options_set_elsewhere_in_tests=options_elsewhere,
         files_loaded_by_tests=test_files, deferred_loads=deferred_loads,
         exported_functions_without_error_path=unvalidated,
         imports=sorted(set(deps)), imports_checked_for_overrides=dep_checked,
@@ -891,8 +1269,16 @@ def main():
     ap.add_argument('path')
     ap.add_argument('--json', action='store_true', help='machine-readable output')
     ap.add_argument('--max', type=int, default=12, help='max hits shown per check (text mode)')
+    ap.add_argument('--test-coverage', action='store_true', help='print the prefilled test coverage table as JSON, for the review\'s test_coverage field')
+    ap.add_argument('--doc-audit', action='store_true', help='print the prefilled per-function documentation tables as JSON, for the review\'s doc_audit field')
     a = ap.parse_args()
     summary, hits = scan(resolve_entry(a.path))
+    if a.doc_audit:
+        json.dump(summary['doc_audit'], sys.stdout, indent=1)
+        return
+    if a.test_coverage:
+        json.dump(summary['test_coverage'], sys.stdout, indent=1)
+        return
     if a.json:
         json.dump(dict(summary=summary, candidates=hits), sys.stdout, indent=1)
         return
@@ -915,9 +1301,20 @@ def main():
     print(f"\nSize: {s['impl_lines']} implementation, {s['doc_lines']} documentation, {s['test_lines']} test lines (non-blank, non-comment)")
     print(f"Exports: {s['exports']}; without a documentation Key: {len(s['undocumented_exports'])}" + (f" -> {', '.join(s['undocumented_exports'][:20])}" if s['undocumented_exports'] else ''))
     print(f"Doc nodes: {s['doc_nodes']} ({s['doc_nodes_without_example']} without an example); doc example blocks: {s['doc_example_blocks']}")
-    print(f"TEST blocks: {s['tests']} ({s['asserts']} asserts, {s['tests_without_assert']} blocks without assert)")
+    print(f"TEST blocks: {s['tests']} ({s['asserts']} asserts, {s['tests_without_assert']} blocks without assert, {s['tests_skipped']} skipped with no-check-flag)")
     nt = s['exported_functions_never_in_tests']
     print(f"Exported functions never mentioned in any TEST: {len(nt)} of {s['exported_functions']}" + (f" -> {', '.join(nt[:25])}" + (' ...' if len(nt) > 25 else '') if nt else ''))
+    ne, oe = s['options_never_in_tests'], s['options_set_elsewhere_in_tests']
+    print(f"Options of exported methods never set in any TEST: {len(ne)} of {s['exported_options']}" + (f" -> {', '.join(ne[:25])}" + (' ...' if len(ne) > 25 else '') if ne else ''))
+    print(f"Options set in a TEST, but never on a call to that method: {len(oe)}" + (f" -> {', '.join(oe[:25])}" + (' ...' if len(oe) > 25 else '') if oe else ''))
+    tc = s['test_coverage']['functions']
+    print(f"Test coverage prefill (--test-coverage): {len(tc)} functions, {sum(t['running_tests'] == 0 for t in tc)} with no running test")
+    au = s['doc_audit']
+    print(f"Documentation audit prefill (--doc-audit): {len(au)} functions; "
+          f"{sum(it['documented'] == 'no' for t in au for it in t['items'])} items not documented, "
+          f"{sum(it['documented'] == 'yes' and it['described'] == 'no' for t in au for it in t['items'])} listed with no written line, "
+          f"{sum(t['examples'] == 0 for t in au)} functions without an example, {sum(len(t['see_also_missing']) for t in au)} See-also gaps"
+          + (f"; dependencies not read: {', '.join(s['doc_audit_deps_unread'])}" if s['doc_audit_deps_unread'] else ''))
     print(f"error() calls in implementation: {s['error_calls']} ({s['error_calls_per_kloc']}/kLOC; "
           "in the 24-package calibration study, curated top packages had a median of 32 and the rest 8)")
     uv = s['exported_functions_without_error_path']

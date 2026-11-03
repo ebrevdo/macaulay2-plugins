@@ -157,13 +157,15 @@ Also look for:
 
 | Question | Weak shape seen in reviews | Stronger alternative |
 |---|---|---|
-| Is the test registered? | `///TEST ... ///` (a string, not a test); a TEST below `end`; a test file that is never loaded | `TEST /// ... ///` in loaded code; confirm with `check` |
+| Is the test registered? | `///TEST ... ///` (a string, not a test); a TEST below `end`; a test file that is never loaded; `no-check-flag` anywhere in the test, even a comment, which makes `check` skip it | `TEST /// ... ///` in loaded code; confirm with `check` |
 | Is the result asserted? | a bare `G == map(...)` as the last line; `time saturate(...)` with nothing compared | `assert(...)`, or compare the strategies' outputs to each other |
 | How strong is the oracle? | `assert(#result == 4)`; `assert instance(x, Ideal)`; residuals summed over an empty result | explicit expected objects; known identities (Catalan and Bell counts, `reg O(d) = -d`, `chi2 = 2^c·length`); an alternative algorithm; reconstruction (`value decomposition == B`) |
 | Would it notice the feature being removed? | testing an option by checking only the return type; checking a quantity the option can't change; comparing a strategy with itself | a fixture where the option provably changes the output, with that difference asserted |
 | Does the negative test check the reason? | `assert(try (f x; false) else true)` passes on *any* error | check the message, or narrow what's inside the `try` |
 | Is it robust to valid randomness? | indexing `L#1#2` of a random sample that may be shorter; requiring degree = group order when smaller degrees are valid | seed it *and* assert only properties every valid output has |
 | Does it reach the risky paths? | only the expanded-argument form tested; only default options; only non-degenerate fixtures; external adapters never exercised | one test per wrapper or option seam found in R1, per boundary case found in R2, and fixture-based parsing tests for adapters |
+| Does every central function have a test? | a central function no running TEST calls; one a TEST calls with nothing asserted about its result; a package with no tests, or only skipped ones | a running test per central function that asserts on its result |
+| Is every result-affecting option tested? | an option no TEST sets; an option set on another method but never on this one (both in the scanner's summary) | a test of that option on that method that would fail if the option were ignored |
 
 Shared implementation weakens an oracle. When "two routes agree" but both call the same helper, say
 so. A test that encodes the current wrong behavior, e.g. asserting an empty result that the docs say
@@ -241,6 +243,8 @@ should be non-empty, is a finding about the test.
 ## I3 Documentation accuracy and usability
 
 - Every exported function, type, and option has a node, and every node has an affordable example.
+- Every option of a public function is listed with a description, and its range is stated when a limit
+  exists. M2 can show an option's name and default without anyone having written anything about it.
 - Outputs say what the object *is* mathematically, not just its class, and use multiple entries only
   for sequences.
 - **Cross-check for contradictions:**
@@ -291,6 +295,74 @@ print x                      -- or: assert(...) with the expected value
 
 Without M2, include the repro so the maintainer can run it.
 
+**Test runtime.** Put this in `check.m2`, and run it under a cap so a hung test can't stall the review:
+
+```m2
+pkg = needsPackage("MyPackage", FileName => "path/to/MyPackage.m2", LoadDocumentation => true)
+print("FILE " | pkg#"source file")
+print("TESTS " | toString(#(tests pkg)))
+check pkg
+```
+
+```bash
+timeout 120 M2 --script check.m2 > check.log 2>&1
+```
+
+- Keep `LoadDocumentation => true`, and check that `FILE` is the copy under review. Without that option,
+  if a package of the same name is installed, `tests` and `check` silently use the installed copy's
+  tests. Don't name the script after the package either, or M2 may load the script as the package.
+- Each test prints a line ending in its elapsed time. `capturing` runs in the current process.
+  `running` starts a new M2 process, which took about 0.75 s on an empty test in our trial, so judge
+  those tests by the time beyond startup. `skipping` means the test did not run.
+- If the cap stops the run (exit status 124), the log still has the tests that finished. Report those
+  times, say the rest did not run, and treat the suite as over 30 s.
+- Timings vary by machine, so give the observed numbers, and don't lean on a test that is close to a limit.
+- `TESTS` is M2's own count. It beats the scanner's, which misses tests registered in a loop or through
+  a wrapper function. A count of 0 can also mean optional software is missing
+  (`OptionalComponentsPresent`, or `if bergmanPresent then TEST ...`), so read the source before
+  reporting that a package has no tests.
+
+**Documentation examples.** Put this in `examples.m2`, with an absolute scratch path ending in `/`:
+
+```m2
+installPackage("MyPackage", FileName => "path/to/MyPackage.m2", InstallPrefix => "/abs/scratch/prefix/",
+    RunExamples => true, RerunExamples => true, IgnoreExampleErrors => true, CheckDocumentation => true,
+    MakeHTML => false, MakeInfo => false, MakePDF => false, MakeLinks => false, UserMode => false)
+```
+
+```bash
+timeout 300 M2 --script examples.m2 > examples.log 2>&1
+```
+
+- Results are in `<prefix>/share/doc/Macaulay2/MyPackage/example-output/`: a `.out` file per page, and an
+  `.errors` file for a page whose example failed. A failed example also makes the run exit non-zero,
+  even with `IgnoreExampleErrors`.
+- A clean run proves only that nothing crashed. Read each `.out` file against the page's text: a wrong
+  value stated in prose, or in an example's comment, still passes.
+- `CannedExample` output is never run, so it can go stale without anyone noticing. So can text pasted
+  from an old session.
+
+**Option probe.** Run each probe under a cap too (`timeout 60 M2 --script probe.m2`). Fix the seed, so a
+random difference can't look like the option working, and print both results rather than comparing
+them with `===`, which is false for equal objects built in different rings:
+
+```m2
+needsPackage("MyPackage", FileName => "path/to/MyPackage.m2")
+setRandomSeed 1; print f(x)
+setRandomSeed 1; print f(x, Opt => value)
+print(try f(x, Opt => "notAValue") else "rejected")   -- for options with a fixed set of values
+```
+
+| Kind of option | Expected | Candidate if |
+|---|---|---|
+| Changes the result (a limit, ring, variable name, or return form) | the result changes as documented | it doesn't change on an input where the docs say it should |
+| Chooses an algorithm (e.g. `Strategy`) | every documented value is accepted, and the results agree | a documented value is rejected, or the results disagree mathematically |
+| Takes a fixed set of values | an unknown value raises an error | an unknown value is silently accepted (I1) |
+
+An unchanged result doesn't prove the option is ignored, because the input may be one where it can't
+matter. Trace the option through the code (R1, R4), and try an input where it should matter, before
+reporting it.
+
 ## O1–O3 Performance, maintainability, style
 
 - **Performance (static).** Watch for:
@@ -338,6 +410,7 @@ packages:
 | T3 | catch-all negative test | high as a pattern, low severity |
 | T4 | `///TEST` | high |
 | T5 | timed computation never checked | medium |
+| T6 | TEST skipped with `no-check-flag` | high |
 | S1 | `use` | high |
 | S2 | ungated output | medium |
 | S3 | override of a core method or of Type/Thing | high |
@@ -356,3 +429,15 @@ packages:
 The header summary also lists files after `end` that contain TEST or doc blocks, and the exported
 functions that no TEST mentions (use it to direct test sampling and find coverage gaps), and methods
 installed on functions and types the package doesn't own that it couldn't check against an import.
+It also lists options of exported methods that no running TEST sets, either at all or on a call to that
+method, leaving out diagnostic options such as `Verbose`. These lists see only literal
+`method(Options => {...})` declarations, so a clean list doesn't prove coverage. An option passed through a
+variable, as in `f(x, opts)`, is listed as not set on that method, so check before reporting it.
+
+`--test-coverage` prints the prefilled test coverage table. It counts a test as using a function if the
+function's name appears in it, including in files the test loads. It can't see tests registered in a loop
+or through a wrapper, and it can't tell whether a test would notice an option being ignored.
+
+`--doc-audit` prints the prefilled documentation tables. Its checks are textual, so treat them as a
+starting point. A function that appears in example code only as a variable name is reported as a
+See-also gap, and a dependency it couldn't read is named in the summary and left out of the check.

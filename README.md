@@ -15,7 +15,8 @@ The skill `m2-package-review` reviews any Macaulay2 package for software quality
 - documentation accuracy and external-tool handling.
 
 Its passes are tiered Required, Important, and Optional; findings are rated by severity, and every
-quoted excerpt is checked against the source. For large or widely used packages, it runs an
+quoted excerpt is checked against the source. Every exported function gets a row in the report's test
+coverage table and its own documentation table. For large or widely used packages, it runs an
 independent second reviewer and verifies that reviewer's findings.
 
 It bundles:

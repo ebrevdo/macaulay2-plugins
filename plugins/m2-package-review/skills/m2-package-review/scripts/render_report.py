@@ -21,6 +21,7 @@ import argparse
 import json
 import os
 import re
+import subprocess
 import sys
 
 MAX_LINES = 8
@@ -31,6 +32,8 @@ KINDS = ('correctness', 'api-contract', 'documentation', 'tests', 'robustness-va
 REQUIRED = ('id', 'severity', 'certainty', 'kind', 'title', 'evidence',
             'what_happens', 'why_it_matters', 'confirm_or_fix')
 OUTCOMES = ('ok', 'finding', 'unclear', 'n/a')
+AUDIT_CELLS = ('yes', 'no', 'unclear', 'n/a')
+AUDIT_KINDS = ('input', 'output', 'option')
 
 
 class Sources:
@@ -124,10 +127,10 @@ def check_types(review, errors):
     need(not isinstance(review.get('passes'), (str, list)) , 'top level: "passes" must be an object')
     need('executed' not in review or isinstance(review['executed'], bool),
          'top level: "executed" must be true or false (a string like "false" would render as executed)')
-    for k in ('limitations', 'next_steps', 'style_notes', 'strengths'):
+    for k in ('limitations', 'coverage', 'next_steps', 'style_notes', 'strengths'):
         v = review.get(k)
         need(v is None or isinstance(v, (list, str)) and (k != 'strengths' or isinstance(v, list)), f'top level: "{k}" must be a list')
-    for k in ('limitations', 'next_steps'):
+    for k in ('limitations', 'coverage', 'next_steps'):
         for x in review.get(k) or [] if isinstance(review.get(k), list) else []:
             need(isinstance(x, str), f'top level: every entry of "{k}" must be a string')
     for i, f in enumerate(review.get('findings') or []):
@@ -170,6 +173,145 @@ def also_loc(x):
         return f'`{x}`' if not x.startswith('`') else x
     s = loc(x) if all(k in x for k in ('file', 'start_line', 'end_line')) else f"`{x.get('file', '?')}`"
     return s + (f" — {x['note']}" if x.get('note') else '')
+
+
+def finding_ids(x):
+    """The finding ids a doc_audit table or row points to: one id or a list."""
+    v = x.get('finding')
+    return [] if v in (None, '') else v if isinstance(v, list) else [v]
+
+
+def check_refs(where, x, needed, ids, errors):
+    """A gap must point to a finding, and every finding it points to must exist."""
+    refs = finding_ids(x)
+    if needed and not refs:
+        errors.append(f'{where}: a gap needs a "finding" id')
+    for ref in refs:
+        if ref not in ids:
+            errors.append(f'{where}: finding {ref!r} does not exist')
+
+
+def check_test_coverage(cov, ids, errors):
+    """Every cell must be filled in, and every gap must point to a finding."""
+    if not isinstance(cov, dict):
+        errors.append('"test_coverage" must be an object with "running", "skipped", "total_time", "slowest_test", "functions"')
+        return
+    for k in ('running', 'skipped'):
+        if not isinstance(cov.get(k), int) or cov[k] < 0:
+            errors.append(f'test_coverage: "{k}" must be a count')
+    for k in ('total_time', 'slowest_test'):
+        if not isinstance(cov.get(k), str) or not cov[k].strip():
+            errors.append(f'test_coverage: "{k}" must be text, such as "4.55 s", or "not measured"')
+    rows = cov.get('functions')
+    if not isinstance(rows, list):
+        errors.append('test_coverage: "functions" must be a list')
+        return
+    for t in rows:
+        if not isinstance(t, dict) or not t.get('function') or not isinstance(t['function'], str):
+            errors.append('test_coverage: every row needs a "function"')
+            continue
+        where = f"test_coverage {t['function']}"
+        if not isinstance(t.get('running_tests'), int) or t['running_tests'] < 0:
+            errors.append(f'{where}: "running_tests" must be a count')
+        if t.get('asserts_on_result') not in AUDIT_CELLS:
+            errors.append(f"{where}: \"asserts_on_result\" must be one of {AUDIT_CELLS}, got {t.get('asserts_on_result')!r}")
+        lists_ok = True
+        for k in ('options_tested', 'options_not_tested'):
+            if not isinstance(t.get(k), list) or not all(isinstance(x, str) for x in t[k]):
+                errors.append(f'{where}: "{k}" must be a list of option names')
+                lists_ok = False
+        gap = t.get('running_tests') == 0 or t.get('asserts_on_result') == 'no' or (lists_ok and bool(t['options_not_tested']))
+        check_refs(where, t, gap, ids, errors)
+
+
+def check_doc_audit(audit, ids, errors):
+    """Every cell must be filled in, and every problem must point to a finding."""
+    if not isinstance(audit, list):
+        errors.append('"doc_audit" must be a list of per-function tables')
+        return
+
+    def check_cell(where, name, value):
+        if value not in AUDIT_CELLS:
+            errors.append(f'{where}: "{name}" must be one of {AUDIT_CELLS}, got {value!r}')
+    for t in audit:
+        if not isinstance(t, dict) or not t.get('function') or not isinstance(t['function'], str):
+            errors.append('doc_audit: every table needs a "function"')
+            continue
+        where = f"doc_audit {t['function']}"
+        if not isinstance(t.get('examples'), int) or t['examples'] < 0:
+            errors.append(f'{where}: "examples" must be a count')
+        check_cell(where, 'examples_correct', t.get('examples_correct'))
+        missing = t.get('see_also_missing', [])
+        if not isinstance(missing, list) or not all(isinstance(x, str) for x in missing):
+            errors.append(f'{where}: "see_also_missing" must be a list of names')
+        check_refs(where, t, t.get('examples') == 0 or bool(missing) or t.get('examples_correct') == 'no', ids, errors)
+        rows = t.get('items')
+        if not isinstance(rows, list) or not rows:
+            errors.append(f'{where}: "items" must list its inputs, outputs and options')
+            continue
+        for n, row in enumerate(rows):
+            at = f'{where} item {n + 1}'
+            if not isinstance(row, dict) or not row.get('item') or row.get('kind') not in AUDIT_KINDS:
+                errors.append(f'{at}: needs "item", and a "kind" that is one of {AUDIT_KINDS}')
+                continue
+            for k in ('documented', 'described', 'limits', 'correct'):
+                check_cell(at, k, row.get(k))
+            check_refs(at, row, any(row.get(k) == 'no' for k in ('documented', 'described', 'limits', 'correct')), ids, errors)
+
+
+def scanner_view(src, flag):
+    """The scanner's prefilled table for this package, or None if it can't be had."""
+    entry = next((c for c in (os.path.join(src.root, src.package + '.m2'), os.path.join(src.root, src.package, src.package + '.m2'))
+                  if os.path.isfile(c)), None)
+    scanner = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'm2_package_scan.py')
+    if not entry or not os.path.isfile(scanner):
+        return None
+    try:
+        r = subprocess.run([sys.executable, '-I', scanner, entry, flag], capture_output=True, text=True, timeout=120)
+        return json.loads(r.stdout)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+
+
+def test_coverage_gaps(cov, src):
+    """Exported functions without a row, and options in none of a row's lists, according to the scanner."""
+    expected = scanner_view(src, '--test-coverage')
+    rows = cov.get('functions')
+    if not expected or not isinstance(rows, list):
+        return []
+    have = {t.get('function'): t for t in rows if isinstance(t, dict)}
+    gaps = []
+    absent = [t['function'] for t in expected['functions'] if t['function'] not in have]
+    if absent:
+        gaps.append('test_coverage has no row for exported function(s): ' + ', '.join(absent))
+    for t in expected['functions']:
+        row = have.get(t['function'])
+        if row:
+            named = {x for k in ('options_tested', 'options_not_tested', 'options_exempt') for x in (row.get(k) or [])}
+            lost = [o for o in t['options_set_in_tests'] + t['options_not_set'] if o not in named]
+            if lost:
+                gaps.append(f"test_coverage {t['function']}: option(s) in no list: " + ', '.join(lost))
+    return gaps
+
+
+def audit_gaps(audit, src):
+    """Exported functions and declared options without a row, according to the scanner."""
+    expected = scanner_view(src, '--doc-audit')
+    if expected is None:
+        return []
+    tables = {t.get('function'): t for t in audit if isinstance(t, dict)}
+    gaps = []
+    absent = [t['function'] for t in expected if t['function'] not in tables]
+    if absent:
+        gaps.append('doc_audit has no table for exported function(s): ' + ', '.join(absent))
+    for t in expected:
+        have = tables.get(t['function'])
+        if have and isinstance(have.get('items'), list):
+            named = {row.get('item') for row in have['items'] if isinstance(row, dict)}
+            lost = [it['item'] for it in t['items'] if it['kind'] == 'option' and it['item'] not in named]
+            if lost:
+                gaps.append(f"doc_audit {t['function']}: no row for option(s): " + ', '.join(lost))
+    return gaps
 
 
 def process(review, src, check_only):
@@ -240,6 +382,22 @@ def process(review, src, check_only):
                 errors.append(f"{where}: outcome must be one of {OUTCOMES}, got {row.get('outcome')!r}")
             if row.get('outcome') == 'finding' and row.get('finding') not in ids:
                 errors.append(f"{where}: outcome 'finding' needs a \"finding\" id that exists, got {row.get('finding')!r}")
+    audit = review.get('doc_audit')
+    if audit is None:
+        warnings.append('no "doc_audit": the per-function documentation tables (I3) are not recorded')
+    else:
+        check_doc_audit(audit, {f.get('id') for f in findings}, errors)
+        if isinstance(audit, list):
+            warnings.extend(audit_gaps(audit, src))
+    cov = review.get('test_coverage')
+    if cov is None:
+        warnings.append('no "test_coverage": the report will have no test coverage table (R3)')
+    else:
+        check_test_coverage(cov, {f.get('id') for f in findings}, errors)
+        if isinstance(cov, dict):
+            warnings.extend(test_coverage_gaps(cov, src))
+    if review.get('coverage') is None:
+        warnings.append('no "coverage": the report will not say what was read and what was sampled')
     if not check_only:
         counts = {SEVERITY[s].lower(): sum(1 for f in findings if f.get('severity') == s) for s in SEVERITY}
         review['severity_counts'] = counts
@@ -279,6 +437,10 @@ def labeled(label, text):
     return f'**{label}** {text}\n'
 
 
+def cell(x):
+    return str(x).replace('|', '\\|').replace('\n', ' ')
+
+
 def render(r):
     out = []
     pkg = r.get('package', 'Package')
@@ -315,7 +477,12 @@ def render(r):
         for f in group:
             out.append(f"#### {f['id']}. {f['title']}\n")
             cert = f['certainty'] + (f" ({f['certainty_note']})" if f.get('certainty_note') else '')
-            out.append(f"**Severity:** {sev} {name} · **Certainty:** {cert} · **Kind:** {f.get('kind', '')}  ")
+            out.append(f"**Severity:** {name} · **Certainty:** {cert} · **Kind:** {f.get('kind', '')}\n")
+            out.append(labeled('What happens.', f['what_happens']))
+            out.append(labeled('Why it matters.', f['why_it_matters']))
+            out.append(labeled('Confirm / fix.', f['confirm_or_fix']))
+            if f.get('repro'):
+                out.append(fence(f['repro'].rstrip()) + '\n')
             evs = f.get('evidence', [])
             where = ', '.join(loc(e) + (f" — {e['note']}" if e.get('note') else '') for e in evs)
             out.append(f'**Where:** {where}\n')
@@ -326,18 +493,12 @@ def render(r):
                 out.append(fence(e['excerpt']) + '\n')
             if f.get('also_at'):
                 out.append('**Also at:** ' + '; '.join(also_loc(x) for x in f['also_at']) + '\n')
-            out.append(labeled('What happens.', f['what_happens']))
-            out.append(labeled('Why it matters.', f['why_it_matters']))
-            out.append(labeled('Confirm / fix.', f['confirm_or_fix']))
-            if f.get('repro'):
-                out.append(fence(f['repro'].rstrip()) + '\n')
     sweep = r.get('boundary_sweep') or []
     if sweep:
         out.append('## Boundary sweep\n')
         out.append('Central functions traced through degenerate inputs. `ok` means traced and handled.\n')
         out.append('| Function | Case | Outcome | Note |')
         out.append('|---|---|---|---|')
-        cell = lambda x: str(x).replace('|', '\\|').replace('\n', ' ')
         for row in sweep:
             outcome = row.get('outcome', '')
             if outcome == 'finding':
@@ -359,13 +520,60 @@ def render(r):
         out.append('## Style-guide notes\n')
         out.extend(f'- {x}' if isinstance(x, str) else f"- {also_loc(x)}" for x in r['style_notes'])
         out.append('')
-    out.append('## Coverage and limitations\n')
     lim = r.get('limitations', [])
-    out.extend(f'- {x}' for x in (lim if isinstance(lim, list) else [lim]))
-    out.append('')
+    if lim:
+        out.append('## Limitations\n')
+        out.extend(f'- {x}' for x in (lim if isinstance(lim, list) else [lim]))
+        out.append('')
     if r.get('next_steps'):
         out.append('## Suggested next steps\n')
         out.extend(f'{i}. {x}' for i, x in enumerate(r['next_steps'], 1))
+        out.append('')
+    tc = r.get('test_coverage')
+    if tc:
+        out.append('## Test coverage\n')
+        out.append(f"**Tests:** {tc['running']} running, {tc['skipped']} skipped · **Total:** {tc['total_time']} · **Slowest:** {tc['slowest_test']}\n")
+        out.append('One row per exported function. **Running tests:** tests that run and use it. **Asserts on result:** at least one '
+                   'of them checks its result. **Options tested:** a test would fail if the option were ignored.\n')
+        out.append('| Function | Running tests | Asserts on result | Options tested | Options not tested | Finding | Note |')
+        out.append('|---|---|---|---|---|---|---|')
+        names = lambda xs: ', '.join(f'`{cell(x)}`' for x in xs) or 'none'
+        for t in tc['functions']:
+            see = ', '.join(f'see {x}' for x in finding_ids(t))
+            note = t.get('note', '')
+            if t.get('options_exempt'):
+                note = (note + ' ' if note else '') + 'Exempt: ' + ', '.join(t['options_exempt']) + '.'
+            out.append(f"| `{cell(t['function'])}` | {t['running_tests']} | {t['asserts_on_result']} | {names(t['options_tested'])} | "
+                       f"{names(t['options_not_tested'])} | {cell(see)} | {cell(note)} |")
+        out.append('')
+    audit = r.get('doc_audit') or []
+    if audit:
+        out.append('## Documentation audit\n')
+        out.append('One table per exported function. **Documented:** the item is listed in the docs. **Described:** someone '
+                   'wrote at least a line for it. **Limits:** its range or limits are stated. **Correct:** the description '
+                   'matches the code.\n')
+        for t in audit:
+            out.append(f"### `{t['function']}`\n")
+            ex = str(t.get('examples', 0))
+            if t.get('canned_examples'):
+                ex += f" ({t['canned_examples']} canned)"
+            if t.get('examples'):
+                ex += f", correct: {t.get('examples_correct')}"
+            names = ', '.join(f'`{x}`' for x in t.get('see_also_missing', [])) or 'none'
+            refs = finding_ids(t)
+            out.append(f'**Examples:** {ex} · **See also missing:** {names}' + (f" · **See:** {', '.join(refs)}" if refs else '') + '\n')
+            out.append('| Item | Kind | Documented | Described | Limits | Correct | Finding | Note |')
+            out.append('|---|---|---|---|---|---|---|---|')
+            for row in t['items']:
+                kind = row['kind'] + (f", {row['type']}" if row.get('type') else '')
+                see = ', '.join(f'see {x}' for x in finding_ids(row))
+                out.append(f"| `{cell(row['item'])}` | {cell(kind)} | {row['documented']} | {row['described']} | {row['limits']} | "
+                           f"{row['correct']} | {cell(see)} | {cell(row.get('note', ''))} |")
+            out.append('')
+    cov = r.get('coverage', [])
+    if cov:
+        out.append('## Review coverage\n')
+        out.extend(f'- {x}' for x in (cov if isinstance(cov, list) else [cov]))
         out.append('')
     return '\n'.join(out).rstrip() + '\n'
 

@@ -60,7 +60,7 @@ is what Macaulay2 actually loads. It reports:
 - `error` density;
 - external and file operations;
 - doc nodes whose Outputs disagree with the declared return type (D1), or that have no example (D2);
-- exported functions that no TEST mentions;
+- exported functions that no TEST mentions, and options of exported methods that no TEST sets;
 - candidate locations for recurring mechanical defects.
 
 **Treat every candidate as a lead, not a finding.** The scanner exists because a holistic read misses
@@ -77,21 +77,19 @@ Then:
    filesystem for it: a `find /` can run for many minutes and stalls the review.
 3. Plan the reading by size.
    - **Up to ~1,500 implementation lines:** read all implementation, all tests, and the docs of every export.
-   - **Larger packages:** read every overload of every exported method, the core algorithms, and all
-     test registration. Docs and tests usually can't all be read, so direct the sampling instead of
-     reading whatever comes first. Without direction, reviewers of large packages read a few dozen of
+   - **Larger packages:** read every overload of every exported method, the doc page of every
+     exported function, the core algorithms, and all test registration. Other docs and tests usually
+     can't all be read, so direct the sampling instead of reading whatever comes first. Without direction, reviewers of large packages read a few dozen of
      several hundred doc nodes and skipped whole test files. See "Directed sampling" below.
-     Record what you read and what you sampled; it goes in the report's limitations.
+     Record what you read and what you sampled in the review JSON's `coverage`.
 
 **Directed sampling (large packages).** Do these in addition to any random sample:
 
 - **Docs.**
-  - Read the doc node of every function that has a finding or a scanner candidate. Its documented
-    contract is part of judging that finding.
-  - Read every node the scanner flags with D1 or D2, the package overview, and the nodes of the
-    main entry points: the functions the overview and the examples call most.
-  - For every other exported method, still compare its Outputs and Usage with the code (shape,
-    type, number of outputs). That check is quick even when you don't read the prose.
+  - Read the doc page of every exported function. The documentation audit in I3 needs it, and the
+    documented contract is part of judging any finding on that function.
+  - Among the other nodes, such as types and tutorials, read every node the scanner flags with D1
+    or D2, and the package overview.
 - **Tests.**
   - Read every TEST block that mentions a function with a finding, so you can say whether the
     defect is covered and whether the test encodes the wrong behavior.
@@ -165,13 +163,30 @@ read), check that offsets, degree shifts, the ring, quotient relations, and attr
 
 **R3. Test effectiveness.** Evaluate tests; don't count them.
 
-- **Registration:** are they registered at all, or stranded after `end` or in unloaded files?
+- **Registration:** are they registered at all, or stranded after `end` or in unloaded files? Tests skipped with `no-check-flag` never run, so they don't count.
 - **Assertion:** does each block assert its comparisons, or does it compute a result (or just `time` it) and check nothing?
 - **Oracle strength:** independent expected values, known identities, or an alternative algorithm are strong. Round trips and invariants are medium. Counts, types, and "no error" are weak.
 - **Sensitivity:** would the test still pass if the option were ignored, the branch deleted, or both strategy names resolved to the same code path?
 - **Negative tests:** do they check for the intended error, or accept any exception?
 - **Randomness:** are seeds fixed? Do assertions assume a result size or property that valid output need not have?
 - **Coverage:** does it reach the risky paths found in R1 and R2, such as wrappers, non-default options, and boundary inputs?
+- **Central functions:** does each central function from the boundary sweep have a running test that asserts on its result? List the ones that don't in one finding: Major.
+- **Options:** does each option of a central function that can change the result have a test that would fail if the option were ignored? Diagnostic options such as `Verbose` are exempt. List the gaps in one finding: Moderate.
+
+A missing test is a finding about the tests, not evidence of a bug in the code (R4). An option shown to
+be ignored is a separate finding (R5, and the option probe in I5).
+
+*Test coverage table.* Every exported function gets a row in the report, passing or not.
+
+1. Run `python3 -I <skill-dir>/scripts/m2_package_scan.py path/to/MyPackage.m2 --test-coverage` and put the
+   output in the review JSON as `test_coverage`. The scanner fills in which running tests use each
+   function, and which options its calls in those tests set. Correct anything it got wrong.
+2. Fill in `asserts_on_result`, then sort each function's options into `options_tested` and
+   `options_not_tested`. An option counts as tested only if a test would fail were it ignored, so being
+   set in a test isn't enough. Put options that can't change the result in `options_exempt`.
+3. Set `total_time` and `slowest_test` from the I5 run. Until then, or without M2, use `not measured`.
+4. Point every gap at a finding, using one finding per root cause. A central function with no test is
+   Major, as above. Any other exported function with no test, or an untested option on one, is Moderate.
 
 **R4. Verify before reporting.** For every candidate, from the scanner or your own reading:
 
@@ -252,6 +267,26 @@ If the renderer reports errors, fix the JSON and rerun it; it writes nothing unt
 - No contradictions: docs vs code, overview vs method page, example comment vs prose, a Usage line that calls a different function.
 - Probabilistic answers, termination preconditions, unsupported domains, and cost warnings appear on the method's own page.
 - Examples show how to interpret or verify a result.
+- The docs describe each public function's whole input space: every input and every option has a description, with its range when a limit exists.
+
+*Documentation audit.* Every exported function gets a table in the report. Internal functions don't.
+
+1. Run `python3 -I <skill-dir>/scripts/m2_package_scan.py path/to/MyPackage.m2 --doc-audit` and put the
+   output in the review JSON as `doc_audit`. The scanner fills in what it can see: whether each item
+   is listed, whether anyone wrote a line for it, the example count, and See-also gaps. Correct
+   anything it got wrong as you read.
+2. Fill in `limits` and `correct` for each item, and `examples_correct` for each function, using
+   `yes`, `no`, `unclear`, or `n/a`. `limits` is `no` only when the code has or needs a limit that
+   the docs don't state.
+3. Point every `no`, every function with no example, and every See-also gap at a finding, then
+   re-render. Use one finding per root cause, listing all its locations, and rate it like this:
+
+- **Major:** an example that fails, or that gives a wrong result or contradicts its page.
+- **Moderate:** an option not documented, or listed without a description; an input or output not documented at all; a limit that exists but isn't documented.
+- **Minor:** an input or output listed with no written line; a function with no example; a See-also gap.
+
+Rate a `correct` cell of `no` by the severity rubric. A See-also gap is a function outside `Core` and
+the preloaded packages that appears in a function's inputs, outputs, or examples but not in its See also.
 
 **I4. External tools and files** (when the package shells out or writes files).
 
@@ -268,6 +303,28 @@ of severity 1 or 2 and run it. Use `M2 --script repro.m2`, or run the package te
 For side effects, compare `listUserSymbols` before and after. Record the observed output in the finding
 and upgrade or downgrade its certainty. Without M2, put the repro in the finding so the maintainer can
 run it.
+
+Three more checks need M2. The commands are in the checklist's I5 section. Without M2, say in
+`limitations` that they didn't run, and don't estimate runtime from the code.
+
+*Test runtime.* Run the whole suite once under a time cap and read the time `check` prints for each
+test. The targets are under 1 s per test and under 30 s in total. Report misses in one finding that
+cites the slowest TEST blocks, with the observed times in `what_happens`:
+
+- **Moderate:** any single test over 10 s, or the suite over 30 s.
+- **Minor:** only tests between 1 and 10 s.
+
+Record the total and the slowest test in `test_coverage`, whether or not they miss a target.
+
+*Option probe.* For each central function, run a small documented-valid input with the defaults, then
+once for each result-affecting option set to a non-default value. Record each probe as a
+`boundary_sweep` row, with a case like `option Limit => 2`. Trace an unchanged result through the code
+before claiming anything (R4). An option shown to be ignored is at least Major (R5).
+
+*Documentation examples.* Run every example once in a scratch install, then compare each output with
+what its page says, because a run only catches crashes. Examples must be correct even if they are too
+slow to run routinely. For a `CannedExample` or an example that hit the cap, run it separately with a
+longer cap if you can. Otherwise trace it by hand and say "not executed" in the row's note.
 
 **I6. Second reviewer, then verification.** Important for packages with more than about 2,000
 implementation lines (the scanner's count), packages that other packages import, and any package
@@ -332,9 +389,9 @@ finding is true.
 | Severity | Meaning |
 |---|---|
 | **1 Critical** | A plausibly wrong mathematical or numerical result, an unsound certificate, or silent data loss on supported input; or a main documented path that returns nothing or crashes on ordinary input. |
-| **2 Major** | A broken public contract users will hit. Examples: a crash or wrong shape on supported but less common input or option combinations; options or resource limits silently ignored; global side effects on unrelated code; docs that direct users to misuse a function; a test that fails to enforce its intended check on an important path. |
-| **3 Moderate** | Poor diagnostics for invalid input, unsolicited output, leaked temp files, low-consequence doc errors or gaps, weak tests on secondary paths, avoidable work with a plausible real cost. |
-| **4 Minor** | Allocation overhead with no evidence it dominates, dead code, cosmetic maintainability issues. |
+| **2 Major** | A broken public contract users will hit. Examples: a crash or wrong shape on supported but less common input or option combinations; options or resource limits silently ignored; global side effects on unrelated code; docs that direct users to misuse a function; a test that fails to enforce its intended check on an important path; a central function with no running test; a documentation example that fails or gives a wrong result. |
+| **3 Moderate** | Poor diagnostics for invalid input, unsolicited output, leaked temp files, low-consequence doc errors or gaps, weak tests on secondary paths, a result-affecting option of a central function with no test, a single test over 10 s or a suite over 30 s, an option not documented or listed without a description, a limit that exists but isn't documented, avoidable work with a plausible real cost. |
+| **4 Minor** | Allocation overhead with no evidence it dominates, dead code, cosmetic maintainability issues, tests over 1 s when none is over 10 s and the suite is under 30 s, an input or output with no written line, a function with no example, a See-also gap. |
 
 ## Calibration reminders
 

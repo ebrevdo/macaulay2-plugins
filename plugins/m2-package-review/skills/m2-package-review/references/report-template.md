@@ -54,12 +54,52 @@ cite paths like `MyPackage.m2` or `MyPackage/core.m2`.
   "boundary_sweep": [
     {"function": "myConstructor", "case": "empty list", "outcome": "ok"},
     {"function": "myConstructor", "case": "ring with no variables", "outcome": "finding", "finding": "F03"},
-    {"function": "transform", "case": "own output fed back in", "outcome": "unclear", "note": "depends on Core's prune"}
+    {"function": "transform", "case": "own output fed back in", "outcome": "unclear", "note": "depends on Core's prune"},
+    {"function": "myConstructor", "case": "option Limit => 2", "outcome": "ok", "note": "I5 option probe: 4 results became 2"}
   ],
   "style_notes": ["optional (pass O3): `MyPackage.m2:40` uses class x === T; use instance"],
   "limitations": [
-    "Read in full: ... Sampled: ... (which doc nodes and test blocks). Not read: ...",
     "Static only; M2 not executed. Dependencies not inspected beyond ..."
+  ],
+  "coverage": [
+    "Read in full: ... Sampled: ... (which doc nodes and test blocks). Not read: ..."
+  ],
+  "test_coverage": {
+    "running": 11,
+    "skipped": 0,
+    "total_time": "4.55 s",
+    "slowest_test": "1.32 s (check 8)",
+    "functions": [
+      {
+        "function": "myConstructor",
+        "running_tests": 2,
+        "asserts_on_result": "yes",
+        "options_set_in_tests": ["Field"],
+        "options_not_set": ["TermOrder", "Verify"],
+        "options_tested": ["Field"],
+        "options_not_tested": ["TermOrder"],
+        "options_exempt": ["Verify"],
+        "finding": "F07",
+        "note": "optional"
+      }
+    ]
+  },
+  "doc_audit": [
+    {
+      "function": "myConstructor",
+      "overloads": ["List", "Graph"],
+      "doc_nodes": ["MyPackage.m2:410"],
+      "examples": 2,
+      "canned_examples": 0,
+      "examples_correct": "yes",
+      "see_also_missing": ["otherFunction"],
+      "finding": "F06",
+      "items": [
+        {"item": "G", "kind": "input", "type": "Graph", "documented": "yes", "described": "yes", "limits": "n/a", "correct": "yes"},
+        {"item": "Field", "kind": "option", "documented": "yes", "described": "no", "limits": "no", "correct": "unclear", "finding": ["F04"], "note": "name and default only"},
+        {"item": "I", "kind": "output", "type": "Ideal", "documented": "yes", "described": "yes", "limits": "n/a", "correct": "yes"}
+      ]
+    }
   ],
   "next_steps": ["Ordered by severity and ease: the fixes and regression tests that retire the most risk."]
 }
@@ -79,10 +119,24 @@ Field rules (the renderer enforces them and writes nothing until they hold):
   `"file:line"` / `"file:a-b"` strings, and they are validated against the source like evidence.
   Strength evidence is listed by location only.
 - **Text fields** (`title`, `what_happens`, `why_it_matters`, `confirm_or_fix`, `repro`, `summary`, and the
-  entries of `limitations` and `next_steps`) must be strings. A review that fails validation leaves any
+  entries of `limitations`, `coverage`, and `next_steps`) must be strings. A review that fails validation leaves any
   previously rendered files untouched.
-- **`boundary_sweep`:** one row per (central function, degenerate case) traced in R2. `outcome` is
-  `ok`, `finding` (with the finding's `id`), `unclear`, or `n/a`. The renderer warns if the sweep is missing.
+- **`boundary_sweep`:** one row per (central function, degenerate case) traced in R2, and one per option
+  probe from I5. `outcome` is `ok`, `finding` (with the finding's `id`), `unclear`, or `n/a`. The
+  renderer warns if the sweep is missing.
+- **`limitations` and `coverage`:** `limitations` holds what affects how far to trust the results, such as
+  what wasn't executed or which dependencies weren't read. `coverage` holds what was read and sampled.
+- **`test_coverage`:** one row per exported function, from `m2_package_scan.py --test-coverage`.
+  `asserts_on_result` is `yes`, `no`, `unclear`, or `n/a`. `total_time` and `slowest_test` are text, or
+  `not measured`. `options_tested`, `options_not_tested`, and the optional `options_exempt` list option
+  names, and may not be left null when the function has options. A function with no running test, a
+  `no`, or an untested option needs a `finding`, which is one id or a list. The renderer warns about
+  exported functions with no row, and options in none of the lists.
+- **`doc_audit`:** one table per exported function, from `m2_package_scan.py --doc-audit`. `documented`,
+  `described`, `limits`, `correct`, and `examples_correct` are `yes`, `no`, `unclear`, or `n/a`, and may
+  not be left null. `described` means someone wrote at least a line for the item. A row with a `no` needs
+  a `finding`, as does a function with no example, a See-also gap, or incorrect examples. `finding` is
+  one id or a list. The renderer warns about exported functions or options that have no row.
 - **`excerpt` fields:** the renderer fills them in. A hand-written excerpt that differs from the
   source is replaced, with a warning.
 
@@ -93,7 +147,7 @@ Guidance:
   (`evidence` for the ones worth quoting, `also_at` for the rest) instead of repeating the finding.
 - Use package-relative paths and 1-based inclusive line ranges.
 - Keep the summary honest when the package is good: "no critical issues found in the parts
-  reviewed" is a valid result, provided `limitations` says what those parts were.
+  reviewed" is a valid result, provided `coverage` says what those parts were.
 
 ## What the renderer produces
 
@@ -116,7 +170,12 @@ This Markdown is not the end of the review: Step 5 of SKILL.md turns the final v
 ### Major
 
 #### F01. <title>
-**Severity:** 2 Major · **Certainty:** definite · **Kind:** api-contract
+**Severity:** Major · **Certainty:** definite · **Kind:** api-contract
+
+**What happens.** …
+**Why it matters.** …
+**Confirm / fix.** …
+
 **Where:** `MyPackage.m2:120-126`, `MyPackage.m2:300-340` — the caller
 
 ```m2
@@ -124,9 +183,6 @@ This Markdown is not the end of the review: Step 5 of SKILL.md turns the final v
 ```
 
 **Also at:** `MyPackage/tests.m2:88` — test asserting the wrong value
-**What happens.** …
-**Why it matters.** …
-**Confirm / fix.** …
 
 ## Boundary sweep
 | Function | Case | Outcome | Note |
@@ -136,6 +192,19 @@ This Markdown is not the end of the review: Step 5 of SKILL.md turns the final v
 - **<title>** (`MyPackage.m2:900-910`)
 
 ## Style-guide notes
-## Coverage and limitations
+## Limitations
 ## Suggested next steps
+
+## Test coverage
+**Tests:** 11 running, 0 skipped · **Total:** 4.55 s · **Slowest:** 1.32 s (check 8)
+| Function | Running tests | Asserts on result | Options tested | Options not tested | Finding | Note |
+…
+
+## Documentation audit
+### `<function>`
+**Examples:** 2, correct: yes · **See also missing:** `otherFunction` · **See:** F06
+| Item | Kind | Documented | Described | Limits | Correct | Finding | Note |
+…
+
+## Review coverage
 ~~~

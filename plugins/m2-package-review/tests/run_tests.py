@@ -49,6 +49,63 @@ s = json.loads(r.stdout)['summary']
 check('a "..." string spanning lines does not unbalance brackets', [p['line'] for p in s['not_loaded_after_end']] == [6] and s['tests'] == 0,
       (s['not_loaded_after_end'], s['tests']))
 
+# --- scanner: option coverage, tests registered from files, skipped tests, runs of slashes
+r = run('m2_package_scan.py', os.path.join(PKGS, 'Opts.m2'), '--json')
+check('scanner exits 0 on Opts', r.returncode == 0, r.stderr[-300:])
+j = json.loads(r.stdout); s = j['summary']
+check('TEST get(...) counts as a test, with the asserts in its file', s['tests'] == 4 and s['asserts'] == 6, (s['tests'], s['asserts']))
+check('files registered by TEST get(...) are not reported as unloaded', s['m2_files_not_loaded'] == [] and
+      s['files_loaded_by_tests'] == ['Opts/test-get.m2', 'Opts/test-aux.m2'], (s['m2_files_not_loaded'], s['files_loaded_by_tests']))
+check('a no-check-flag test is counted as skipped and flagged T6', s['tests_skipped'] == 1 and
+      [h['loc'] for k, v in j['candidates'].items() if k.startswith('T6') for h in v] == ['Opts.m2:15'])
+check('a function used only in a skipped test counts as untested', s['exported_functions_never_in_tests'] == ['optC'], s['exported_functions_never_in_tests'])
+check('options: only top-level keys count, and diagnostic options are exempt', s['exported_options'] == 4, s['exported_options'])
+check('options never set in any TEST are listed', s['options_never_in_tests'] == ['optA: Never'], s['options_never_in_tests'])
+check('options set only on another method are listed', s['options_set_elsewhere_in_tests'] == ['optA: Elsewhere'], s['options_set_elsewhere_in_tests'])
+check('C6 does not mistake TypicalValue or a nested key for an option',
+      not [h for k, v in j['candidates'].items() if k.startswith('C6') for h in v if 'TypicalValue' in h['note'] or 'Inner' in h['note']])
+check('an even run of slashes does not end a /// string', not [k for k in j['candidates'] if k.startswith('T4')] and s['tests'] == 4, list(j['candidates']))
+
+# --- scanner: test coverage table
+r = run('m2_package_scan.py', os.path.join(PKGS, 'Opts.m2'), '--test-coverage')
+check('--test-coverage exits 0', r.returncode == 0, r.stderr[-300:])
+tc = json.loads(r.stdout); cov = {t['function']: t for t in tc['functions']}
+check('coverage counts running and skipped tests', (tc['running'], tc['skipped']) == (3, 1), (tc['running'], tc['skipped']))
+check('coverage leaves the timing for the reviewer', tc['total_time'] is None and tc['slowest_test'] is None)
+check('every exported function gets a coverage row', sorted(cov) == ['optA', 'optB', 'optC', 'optD', 'optE'], sorted(cov))
+check('a function counts as tested by a running TEST, a TEST get file, or an auxiliary file',
+      [cov[f]['running_tests'] for f in ('optA', 'optD', 'optE')] == [1, 1, 1], cov)
+check('a function used only in a skipped test has no running test, and no assertion', cov['optC']['running_tests'] == 0 and cov['optC']['asserts_on_result'] == 'no', cov['optC'])
+check('options set on the call are told apart from the rest, and diagnostic options are left out',
+      (cov['optA']['options_set_in_tests'], cov['optA']['options_not_set']) == (['Tested'], ['Elsewhere', 'Never']), cov['optA'])
+check('sorting options is left to the reviewer, unless there are none', cov['optA']['options_tested'] is None and cov['optC']['options_tested'] == [], cov['optC'])
+
+# --- scanner: documentation audit, in both documentation formats
+r = run('m2_package_scan.py', os.path.join(PKGS, 'Docs.m2'), '--doc-audit')
+check('--doc-audit exits 0', r.returncode == 0, r.stderr[-300:])
+au = {t['function']: t for t in json.loads(r.stdout)}
+check('every exported function gets a table', sorted(au) == ['docA', 'docB', 'docC', 'docD'], sorted(au))
+check('an option page keyed by method counts as documented and described',
+      [(it['documented'], it['described']) for it in au['docD']['items'] if it['item'] == 'OwnPage'] == [('yes', 'yes')], au['docD']['items'])
+rows = {(it['kind'], it['item']): (it['documented'], it['described']) for it in au['docA']['items']}
+check('a SimpleDoc option with text is described', rows[('option', 'Written')] == ('yes', 'yes'), rows)
+check('a SimpleDoc option with only a type is listed but not described', rows[('option', 'NameOnly')] == ('yes', 'no'), rows)
+check('a declared option missing from the docs is not documented', rows[('option', 'Absent')] == ('no', 'no'), rows)
+check('a SimpleDoc input with text is described', rows[('input', 'n')] == ('yes', 'yes'), rows)
+check('a SimpleDoc output with only a type is not described', rows[('output', 'ZZ')] == ('yes', 'no'), rows)
+rows = {(it['kind'], it['item']): (it['documented'], it['described']) for it in au['docB']['items']}
+check('an old-style input with text is described', rows[('input', 'n')] == ('yes', 'yes'), rows)
+check('an old-style output with only a type is not described', rows[('output', 'ZZ')] == ('yes', 'no'), rows)
+check('examples and canned examples are counted', (au['docA']['examples'], au['docA']['canned_examples'], au['docB']['examples']) == (2, 1, 1),
+      (au['docA']['examples'], au['docA']['canned_examples'], au['docB']['examples']))
+check('See also: own and imported functions count; itself, listed ones, comments and preloaded packages do not',
+      au['docA']['see_also_missing'] == ['bar'], au['docA']['see_also_missing'])
+check('See also: an old-format page is checked too', au['docB']['see_also_missing'] == ['docA'], au['docB']['see_also_missing'])
+check('a function with no page has undocumented items and no example',
+      au['docC']['examples'] == 0 and all(it['documented'] == 'no' for it in au['docC']['items']) and {it['kind'] for it in au['docC']['items']} == {'input', 'output'}, au['docC'])
+check('judgment cells are left for the reviewer', all(it['limits'] is None and it['correct'] is None for it in au['docA']['items'])
+      and au['docA']['examples_correct'] is None)
+
 # --- renderer: validation before writing, also_at checks, atomic outputs
 good = {"package": "Foo", "summary": "Fixture.", "snapshot": "0.1", "executed": False,
         "passes": {"required": ["R1"], "important": [], "optional": []},
@@ -81,6 +138,66 @@ with tempfile.TemporaryDirectory() as d:
     r = run('render_report.py', jp, '--root', PKGS, '--out', mp)
     check('renderer rejects a non-boolean "executed"', r.returncode != 0, r.stdout[-200:])
     open(jp, 'w').write(before[0])
+
+    # report layout: severity word only, limitations and coverage apart, one table per exported function
+    row = {"item": "n", "kind": "input", "type": "ZZ", "documented": "yes", "described": "yes", "limits": "n/a", "correct": "yes"}
+    table = {"function": "fooA", "examples": 1, "examples_correct": "yes", "see_also_missing": [], "items": [row]}
+    audited = json.loads(json.dumps(good)); audited['coverage'] = ['Read everything.']; audited['doc_audit'] = [table]
+    json.dump(audited, open(jp, 'w'))
+    r = run('render_report.py', jp, '--root', PKGS, '--out', mp)
+    rep = open(mp).read()
+    check('renderer accepts a documentation audit', r.returncode == 0, r.stderr[-300:])
+    check('severity is shown as a word, without its number', '**Severity:** Major ·' in rep and '2 Major' not in rep)
+    check('a finding explains itself before showing where it is',
+          rep.index('**What happens.**') < rep.index('**Why it matters.**') < rep.index('**Confirm / fix.**') < rep.index('**Where:**') < rep.index('```m2') < rep.index('**Also at:**'))
+    check('limitations and coverage are separate sections', '## Limitations' in rep and '## Review coverage' in rep and 'Coverage and limitations' not in rep)
+    check('the audit table is rendered before the coverage section', rep.index('### `fooA`') < rep.index('## Review coverage') and '| `n` | input, ZZ | yes |' in rep)
+    check('renderer warns about an exported function with no table', 'fooB' in r.stderr, r.stderr[-300:])
+    audited['doc_audit'] = [dict(table, function='fooB'), table]
+    json.dump(audited, open(jp, 'w'))
+    r = run('render_report.py', jp, '--root', PKGS, '--out', mp)
+    check('no warning once every exported function has a table', 'no table' not in r.stderr, r.stderr[-300:])
+    for label, change in [('an unfilled cell', lambda t: t['items'][0].update(limits=None)),
+                          ('a "no" with no finding', lambda t: t['items'][0].update(described='no')),
+                          ('a finding that does not exist', lambda t: t['items'][0].update(described='no', finding='F99')),
+                          ('a See-also gap with no finding', lambda t: t.update(see_also_missing=['bar'])),
+                          ('a function with no example and no finding', lambda t: t.update(examples=0, examples_correct='n/a')),
+                          ('an unknown item kind', lambda t: t['items'][0].update(kind='return'))]:
+        bad = json.loads(json.dumps(audited)); change(bad['doc_audit'][0]); json.dump(bad, open(jp, 'w'))
+        r = run('render_report.py', jp, '--root', PKGS, '--out', mp)
+        check(f'renderer rejects {label}', r.returncode != 0, r.stdout[-200:])
+    bad = json.loads(json.dumps(audited)); bad['doc_audit'][0]['items'][0].update(described='no', finding=['F01']); json.dump(bad, open(jp, 'w'))
+    r = run('render_report.py', jp, '--root', PKGS, '--out', mp)
+    check('a "no" pointing at a real finding is accepted', r.returncode == 0, r.stderr[-300:])
+
+    # test coverage table: every exported function has a row, gaps point to findings
+    cov_row = {"function": "fooA", "running_tests": 1, "asserts_on_result": "yes", "options_tested": [], "options_not_tested": []}
+    covered = json.loads(json.dumps(audited))
+    covered['test_coverage'] = {"running": 1, "skipped": 0, "total_time": "0.1 s", "slowest_test": "0.1 s (check 0)", "functions": [cov_row]}
+    json.dump(covered, open(jp, 'w'))
+    r = run('render_report.py', jp, '--root', PKGS, '--out', mp)
+    rep = open(mp).read()
+    check('renderer accepts a test coverage table', r.returncode == 0, r.stderr[-300:])
+    check('the test coverage section comes before the documentation audit', '## Test coverage' in rep and rep.index('## Test coverage') < rep.index('## Documentation audit'))
+    check('the suite line and a row are rendered', '**Tests:** 1 running, 0 skipped · **Total:** 0.1 s · **Slowest:** 0.1 s (check 0)' in rep and '| `fooA` | 1 | yes | none | none |' in rep, rep[-600:])
+    check('renderer warns about an exported function with no coverage row', 'test_coverage has no row for exported function(s): fooB' in r.stderr, r.stderr[-300:])
+    for label, change in [('a null timing', lambda c: c.update(total_time=None)),
+                          ('an unfilled assertion cell', lambda c: c['functions'][0].update(asserts_on_result=None)),
+                          ('unsorted options', lambda c: c['functions'][0].update(options_tested=None)),
+                          ('a function with no running test and no finding', lambda c: c['functions'][0].update(running_tests=0)),
+                          ('an untested option with no finding', lambda c: c['functions'][0].update(options_not_tested=['Opt'])),
+                          ('a coverage finding that does not exist', lambda c: c['functions'][0].update(options_not_tested=['Opt'], finding='F99')),
+                          ('coverage that is not an object', lambda c: c.clear())]:
+        bad = json.loads(json.dumps(covered)); change(bad['test_coverage'])
+        if not bad['test_coverage']:
+            bad['test_coverage'] = ['not an object']
+        json.dump(bad, open(jp, 'w'))
+        r = run('render_report.py', jp, '--root', PKGS, '--out', mp)
+        check(f'renderer rejects {label}', r.returncode != 0, r.stdout[-200:])
+    bad = json.loads(json.dumps(covered)); bad['test_coverage']['functions'][0].update(options_not_tested=['Opt'], finding='F01'); json.dump(bad, open(jp, 'w'))
+    r = run('render_report.py', jp, '--root', PKGS, '--out', mp)
+    check('an untested option pointing at a real finding is accepted', r.returncode == 0, r.stderr[-300:])
+    open(jp, 'w').write(before[0]); open(mp, 'w').write(before[1])
     r = run('render_report.py', jp, '--root', PKGS, '--out', os.path.join(d, 'missing-dir', 'r.md'))
     check('an unwritable report path fails without touching the JSON', r.returncode != 0 and open(jp).read() == before[0], r.stderr[-200:])
     fenced = json.loads(json.dumps(good)); fenced['findings'][0]['confirm_or_fix'] = '```m2\nfooA 1\n```\nFix: guard it.'
@@ -109,12 +226,13 @@ with tempfile.TemporaryDirectory() as d:
     check('md_to_pdf writes styled HTML with tables and code', '<table' in page and '<pre' in page and '@page' in page, r.stderr[-200:])
     rep = os.path.join(d, 'rep.md')
     open(rep, 'w').write('# R\n\n**Findings:** 1 critical · 1\nminor\n\n## Findings\n\n### Critical\n\n'
-                         '#### F01. Bad thing\n\n**Severity:** 1 Critical · **Certainty:** definite · **Kind:** correctness\n'
+                         '#### F01. Bad thing\n\n**Severity:** Critical · **Certainty:** definite · **Kind:** correctness\n'
                          '**Where:** `Foo.m2:4-5`\n\nRelated to F02.\n\n### Minor\n\n#### F02. Small thing\n\n'
                          '**Severity:** 4 Minor · **Certainty:** probable\n')
     r = run('md_to_pdf.py', rep, '--html', '--source-url', 'https://example.org/pkgs/')
     page = open(os.path.join(d, 'rep.html')).read() if r.returncode == 0 else ''
     check('md_to_pdf wraps findings in severity-colored cards', 'class="finding sev-1"' in page and 'class="finding sev-4"' in page)
+    check('md_to_pdf shows the severity word only, in new and old reports', '>Critical</span>' in page and '>Minor</span>' in page and '4 Minor' not in page)
     check('md_to_pdf links finding ids in running text', 'class="xref" href="#f02"' in page)
     check('md_to_pdf links file:line citations to the source', 'href="https://example.org/pkgs/Foo.m2#L4-L5"' in page)
     check('md_to_pdf links severity counts, even across a line break', 'href="#critical"' in page and 'href="#minor"' in page)

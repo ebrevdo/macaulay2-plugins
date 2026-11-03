@@ -122,3 +122,50 @@ characteristic copies dominance and birationality flags that reduction can inval
 
 None of the 12 checked claims was refuted. But a third of the severities moved and one mechanism
 was wrong, so the second pass's findings deserve the same verification before they are trusted.
+
+## Test coverage and runtime targets (November 2026)
+
+The R3 coverage requirements, and the runtime targets and option probe in I5, come from feedback on the
+skill, not from the 24 reviews above, which never ran M2. These measurements show how the rules land on
+the installed packages of Macaulay2 1.24.11 (the study above used 1.26.06).
+
+| Measure | Result |
+|---|---|
+| No tests, by M2's own count | 29 of 273 packages; some depend on optional software |
+| Exported function never mentioned in a TEST | 33% of 3,736 (240 packages) |
+| Option never set in any TEST | 53% of 1,683; at least one in 139 of 166 packages |
+| Option never set on a call to its own method | 77% of 1,683 |
+| A test over 1 s | 10 of 16 random packages (46 of 217 tests) |
+| A test over 10 s | 2 of 16 packages (3 of 217 tests) |
+| Suite over 30 s | 4 of 16 packages, 2 of them stopped at a 60 s cap |
+
+The option rows exclude diagnostic options. Timings are one run each, with three packages at a time. An
+empty test took about 0.05 s in-process and about 0.75 s in a new M2 process.
+
+Most packages miss the 1 s target and have an untested option. That's why each kind of miss is one
+grouped finding per package, and why neither is rated above Moderate on its own. The scanner's TEST count
+disagreed with M2's on 6 of the 273: tests registered in a loop or through a wrapper, tests that depend
+on optional software, and two small over-counts that weren't traced.
+
+## Documentation audit (November 2026)
+
+The per-function tables in I3, the rule that examples must be correct, and the See-also rule also come
+from feedback on the skill. These are the scanner's prefilled values across the same installed packages:
+4,006 exported functions in 256 packages. "Core" means `Core` plus `Core#"preloaded packages"`, as listed
+by M2 1.24.11.
+
+| Measure | Result |
+|---|---|
+| Option not documented | 9% of 2,036 |
+| Option listed with no written line | 16% of 2,036 |
+| Function with no example | 12% |
+| Function with a See-also gap | 52%, in 176 of 256 packages; median 2 names, at most 14 |
+
+These are prefill values, not reviewed findings, so a reviewer may overturn some. An option a package
+marks `undocumented` counts as not documented. A spot check of 15 "not documented" options found one
+parsing bug, since fixed: option pages keyed by method, as in `[(f, ZZ), Opt]`. It also found that
+Bertini's `doc.m2` is never loaded, so those pages really don't reach users.
+
+Running a package's examples in a scratch install took 31 s for BinomialEdgeIdeals. On a test package
+it caught a failing example but not a false statement in the page's text, which is why I5 asks the
+reviewer to compare the output with the page.

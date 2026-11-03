@@ -35,8 +35,9 @@ representation round trips and caches, and dependency interactions. Spend your e
   one (a new failing input class, a higher severity justified by new evidence), report it and say which
   title it extends in `what_happens`.
 - The usual JSON, rendered with `scripts/render_report.py`, with a `boundary_sweep` table covering every
-  central function. In `limitations`, list the central functions you chose and what you did not reach.
+  central function. In `coverage`, list the central functions you chose and what you did not reach.
 - Stop at the rendered Markdown. Don't make a PDF; only the merged review gets one.
+- Skip `test_coverage` and `doc_audit`, and ignore the renderer's warnings about them. The first review's tables stay.
 - Prefer fewer well-traced findings. A static second pass that adds two verified major defects is a
   success; ten speculative ones are not.
 
@@ -86,6 +87,9 @@ question rather than silently changing a claim.
 - **Strengths:** take the union, without duplicates.
 - **Summary and next steps:** rewrite both to cover all findings. The summary should name the most
   consequential problems across both passes.
+- **Test coverage and documentation audit:** keep the first review's tables. If a second-pass finding
+  shows a cell is wrong, update that cell and point it at the finding.
+- **Coverage:** combine both lists.
 - **Limitations:** combine both lists. Note that I6 ran, which findings came from it, and any refuted or
   unverified claims.
 - **Metadata:** list I6 among the completed passes. The renderer recomputes the severity counts.
