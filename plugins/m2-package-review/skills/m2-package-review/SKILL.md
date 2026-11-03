@@ -276,8 +276,14 @@ If the renderer reports errors, fix the JSON and rerun it; it writes nothing unt
    is listed, whether anyone wrote a line for it, the example count, and See-also gaps. Correct
    anything it got wrong as you read.
 2. Fill in `limits` and `correct` for each item, and `examples_correct` for each function, using
-   `yes`, `no`, `unclear`, or `n/a`. `limits` is `no` only when the code has or needs a limit that
-   the docs don't state.
+   `yes`, `no`, `unclear`, or `n/a`. Apply these definitions to every cell, including the prefilled ones:
+   - `documented`: the item is in the page's inputs or outputs, has its own page, or is named in the
+     prose. Appearing only in an example doesn't count.
+   - `described`: someone wrote at least a line for it.
+   - `limits`: `n/a` when no limit can apply, such as a Boolean. `no` only when the code has or needs a
+     limit that the docs don't state. A missing description doesn't by itself make this `no`.
+   - `correct`: `no` whenever the docs promise something the code doesn't do, even if the bug has its
+     own finding; point the cell at that finding. `n/a` when the docs say nothing about the item to judge.
 3. Point every `no`, every function with no example, and every See-also gap at a finding, then
    re-render. Use one finding per root cause, listing all its locations, and rate it like this:
 
@@ -388,7 +394,7 @@ finding is true.
 
 | Severity | Meaning |
 |---|---|
-| **1 Critical** | A plausibly wrong mathematical or numerical result, an unsound certificate, or silent data loss on supported input; or a main documented path that returns nothing or crashes on ordinary input. |
+| **1 Critical** | A plausibly wrong mathematical or numerical result, an unsound certificate, or silent data loss on supported input; or a main documented path that returns nothing or crashes on ordinary input. A result in the wrong ring, or one that loses its coefficient field or variables, on valid input counts as a wrong mathematical result. |
 | **2 Major** | A broken public contract users will hit. Examples: a crash or wrong shape on supported but less common input or option combinations; options or resource limits silently ignored; global side effects on unrelated code; docs that direct users to misuse a function; a test that fails to enforce its intended check on an important path; a central function with no running test; a documentation example that fails or gives a wrong result. |
 | **3 Moderate** | Poor diagnostics for invalid input, unsolicited output, leaked temp files, low-consequence doc errors or gaps, weak tests on secondary paths, a result-affecting option of a central function with no test, a single test over 10 s or a suite over 30 s, an option not documented or listed without a description, a limit that exists but isn't documented, avoidable work with a plausible real cost. |
 | **4 Minor** | Allocation overhead with no evidence it dominates, dead code, cosmetic maintainability issues, tests over 1 s when none is over 10 s and the suite is under 30 s, an input or output with no written line, a function with no example, a See-also gap. |

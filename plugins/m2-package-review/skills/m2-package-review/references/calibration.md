@@ -169,3 +169,8 @@ Bertini's `doc.m2` is never loaded, so those pages really don't reach users.
 Running a package's examples in a scratch install took 31 s for BinomialEdgeIdeals. On a test package
 it caught a failing example but not a false statement in the page's text, which is why I5 asks the
 reviewer to compare the output with the page.
+
+Two Codex runs on BinomialEdgeIdeals, with the same model and effort, found the same 10 issues, but their
+judgments varied. Of 27 table rows, `Described` differed on none, `Documented` on 4, `Limits` on 7, and
+`Correct` on 9. One run rated the edgeless-graph bug Critical and the other Major. The definitions in I3
+and the Critical row of the rubric were tightened in response, and a rerun hasn't yet shown how much that helps.

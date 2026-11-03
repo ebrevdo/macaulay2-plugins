@@ -96,7 +96,7 @@ cite paths like `MyPackage.m2` or `MyPackage/core.m2`.
       "finding": "F06",
       "items": [
         {"item": "G", "kind": "input", "type": "Graph", "documented": "yes", "described": "yes", "limits": "n/a", "correct": "yes"},
-        {"item": "Field", "kind": "option", "documented": "yes", "described": "no", "limits": "no", "correct": "unclear", "finding": ["F04"], "note": "name and default only"},
+        {"item": "Field", "kind": "option", "documented": "yes", "described": "no", "limits": "no", "correct": "n/a", "finding": ["F04"], "note": "name and default only; must be a field"},
         {"item": "I", "kind": "output", "type": "Ideal", "documented": "yes", "described": "yes", "limits": "n/a", "correct": "yes"}
       ]
     }
@@ -134,7 +134,7 @@ Field rules (the renderer enforces them and writes nothing until they hold):
   exported functions with no row, and options in none of the lists.
 - **`doc_audit`:** one table per exported function, from `m2_package_scan.py --doc-audit`. `documented`,
   `described`, `limits`, `correct`, and `examples_correct` are `yes`, `no`, `unclear`, or `n/a`, and may
-  not be left null. `described` means someone wrote at least a line for the item. A row with a `no` needs
+  not be left null. I3 in SKILL.md defines each one. A row with a `no` needs
   a `finding`, as does a function with no example, a See-also gap, or incorrect examples. `finding` is
   one id or a list. The renderer warns about exported functions or options that have no row.
 - **`excerpt` fields:** the renderer fills them in. A hand-written excerpt that differs from the

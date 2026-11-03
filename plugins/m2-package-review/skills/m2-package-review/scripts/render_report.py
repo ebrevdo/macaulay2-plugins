@@ -549,9 +549,10 @@ def render(r):
     audit = r.get('doc_audit') or []
     if audit:
         out.append('## Documentation audit\n')
-        out.append('One table per exported function. **Documented:** the item is listed in the docs. **Described:** someone '
-                   'wrote at least a line for it. **Limits:** its range or limits are stated. **Correct:** the description '
-                   'matches the code.\n')
+        out.append('One table per exported function. **Documented:** the item is in the inputs or outputs, on its own page, or '
+                   'in the prose; an example alone doesn\'t count. **Described:** someone wrote at least a line for it. '
+                   '**Limits:** its range or limits are stated (`n/a` if none can apply). **Correct:** the docs match what the '
+                   'code does (`n/a` if they say nothing to judge).\n')
         for t in audit:
             out.append(f"### `{t['function']}`\n")
             ex = str(t.get('examples', 0))
